@@ -5,7 +5,7 @@ cask "pwrsnap" do
   url "https://github.com/pwrdrvr/PwrSnap/releases/download/v#{version}/PwrSnap-#{version}-universal.dmg",
       verified: "github.com/pwrdrvr/PwrSnap/"
   name "PwrSnap"
-  desc "Screen capture, annotation, and screen recording with optional local-Codex AI assist"
+  desc "Screen capture, annotation, and recording with optional AI assist"
   homepage "https://pwrsnap.com/"
 
   # Tracks the Stable train only: /releases/latest never points at a
@@ -20,7 +20,7 @@ cask "pwrsnap" do
   # General → Check for Updates). `brew upgrade` still works, but Homebrew
   # won't nag about a version the app already moved past.
   auto_updates true
-  depends_on macos: ">= :sonoma"
+  depends_on macos: :sonoma
 
   app "PwrSnap.app"
 

@@ -45,11 +45,17 @@ jobs:
         name: Rewrite version + sha256
         run: scripts/bump-cask.sh "${{ steps.resolve.outputs.version }}"
 
+      # Path-based `brew audit` is disabled, so link the checkout in as a
+      # real tap and audit the cask by its fully-qualified token.
       - if: steps.resolve.outputs.version != steps.resolve.outputs.current
         name: Lint + audit the cask
         run: |
-          brew style Casks/pwrsnap.rb
-          brew audit --cask --online Casks/pwrsnap.rb
+          set -euo pipefail
+          taps="$(brew --repository)/Library/Taps/pwrdrvr"
+          mkdir -p "$taps"
+          ln -s "$GITHUB_WORKSPACE" "$taps/homebrew-tap"
+          brew style pwrdrvr/tap
+          brew audit --cask --online pwrdrvr/tap/pwrsnap
 
       - if: steps.resolve.outputs.version != steps.resolve.outputs.current
         uses: peter-evans/create-pull-request@v7
