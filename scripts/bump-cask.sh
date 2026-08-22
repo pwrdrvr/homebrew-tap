@@ -10,18 +10,18 @@ set -euo pipefail
 
 v="${1:?usage: bump-cask.sh <version-without-leading-v>}"
 v="${v#v}"
-cask="$(cd "$(dirname "$0")/.." && pwd)/Casks/pwrsnap.rb"
+cask="$(cd "$(dirname "${0}")/.." && pwd)/Casks/pwrsnap.rb"
 url="https://github.com/pwrdrvr/PwrSnap/releases/download/v${v}/PwrSnap-${v}-universal.dmg"
 
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+trap 'rm -rf "${tmp}"' EXIT
 
-echo "Fetching $url"
-curl -fsSL --retry 3 -o "$tmp/PwrSnap.dmg" "$url"
+echo "Fetching ${url}"
+curl -fsSL --retry 3 -o "$tmp/PwrSnap.dmg" "${url}"
 sha="$(shasum -a 256 "$tmp/PwrSnap.dmg" | cut -d' ' -f1)"
 
 # perl -pi is portable across macOS + Linux (sed -i differs).
-perl -pi -e "s/^  version \".*\"/  version \"${v}\"/; s/^  sha256 \".*\"/  sha256 \"${sha}\"/" "$cask"
+perl -pi -e "s/^  version \".*\"/  version \"${v}\"/; s/^  sha256 \".*\"/  sha256 \"${sha}\"/" "${cask}"
 
-echo "pwrsnap cask → ${v} (${sha})"
-git -C "$(dirname "$cask")/.." diff --stat -- Casks/pwrsnap.rb || true
+echo "pwrsnap cask -> ${v} (${sha})"
+git -C "$(dirname "${cask}")/.." diff --stat -- Casks/pwrsnap.rb || true

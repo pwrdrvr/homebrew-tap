@@ -13,25 +13,48 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Scoped to the cask file on purpose. `brew style <tap>` also runs
+      # shellcheck/shfmt/actionlint across the repo's scripts and
+      # workflows, which is a different job from validating the Ruby.
+      - name: Lint the cask
+        run: brew style Casks/pwrsnap.rb
+
       # Homebrew disabled path-based invocation ("Calling `brew audit
       # [path ...]` is disabled! Use `brew audit [name ...]` instead"), so
-      # the checkout is linked in as a real tap and every command below
-      # addresses the cask by its fully-qualified token.
+      # the checkout is linked in as a real tap and the commands below
+      # address the cask by its fully-qualified token. Linking the
+      # checkout — rather than `brew tap pwrdrvr/tap` — is what makes this
+      # gate the PR's cask instead of the one already on main.
       - name: Link the checkout as a tap
         run: |
           set -euo pipefail
           taps="$(brew --repository)/Library/Taps/pwrdrvr"
-          mkdir -p "$taps"
-          ln -s "$GITHUB_WORKSPACE" "$taps/homebrew-tap"
+          mkdir -p "${taps}"
+          ln -s "${GITHUB_WORKSPACE}" "${taps}/homebrew-tap"
           brew tap | grep -qx "pwrdrvr/tap"
 
-      - run: brew style pwrdrvr/tap
-      - run: brew audit --cask --online pwrdrvr/tap/pwrsnap
-      - run: brew install --cask pwrdrvr/tap/pwrsnap
+      # Homebrew ignores casks from untrusted taps (docs.brew.sh/Tap-Trust).
+      # Trust this one cask rather than the whole tap, and only on brews
+      # new enough to have the command.
+      - name: Trust the cask
+        run: |
+          set -euo pipefail
+          if brew trust --help >/dev/null 2>&1; then
+            brew trust --cask pwrdrvr/tap/pwrsnap
+          else
+            echo "brew trust not available on this Homebrew; skipping"
+          fi
+
+      - name: Audit the cask against its live download
+        run: brew audit --cask --online pwrdrvr/tap/pwrsnap
+
+      - name: Install
+        run: brew install --cask pwrdrvr/tap/pwrsnap
 
       # The `app` stanza moves the real bundle to /Applications (the
-      # Caskroom keeps only a symlink pointing back at it), so this is
-      # also the check that TCC/Launch Services see a normal app path.
+      # Caskroom keeps only a symlink pointing back at it), which is what
+      # keeps TCC, Launch Services and Spotlight seeing a normal app path.
+      # Assert that rather than trust it.
       - name: Verify the installed app
         run: |
           set -euo pipefail
@@ -41,4 +64,5 @@ jobs:
             | grep -q "Authority=Developer ID Application: PwrDrvr LLC"
           spctl -a -vv /Applications/PwrSnap.app
 
-      - run: brew uninstall --cask pwrsnap
+      - name: Uninstall
+        run: brew uninstall --cask pwrsnap

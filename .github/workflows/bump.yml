@@ -45,16 +45,23 @@ jobs:
         name: Rewrite version + sha256
         run: scripts/bump-cask.sh "${{ steps.resolve.outputs.version }}"
 
-      # Path-based `brew audit` is disabled, so link the checkout in as a
-      # real tap and audit the cask by its fully-qualified token.
       - if: steps.resolve.outputs.version != steps.resolve.outputs.current
-        name: Lint + audit the cask
+        name: Lint the cask
+        run: brew style Casks/pwrsnap.rb
+
+      # Path-based `brew audit` is disabled, so link the checkout in as a
+      # real tap and audit the cask by its fully-qualified token. Untrusted
+      # taps are ignored (docs.brew.sh/Tap-Trust), hence `brew trust`.
+      - if: steps.resolve.outputs.version != steps.resolve.outputs.current
+        name: Audit the cask against its live download
         run: |
           set -euo pipefail
           taps="$(brew --repository)/Library/Taps/pwrdrvr"
-          mkdir -p "$taps"
-          ln -s "$GITHUB_WORKSPACE" "$taps/homebrew-tap"
-          brew style pwrdrvr/tap
+          mkdir -p "${taps}"
+          ln -s "${GITHUB_WORKSPACE}" "${taps}/homebrew-tap"
+          if brew trust --help >/dev/null 2>&1; then
+            brew trust --cask pwrdrvr/tap/pwrsnap
+          fi
           brew audit --cask --online pwrdrvr/tap/pwrsnap
 
       - if: steps.resolve.outputs.version != steps.resolve.outputs.current
