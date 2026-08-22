@@ -1,0 +1,22 @@
+# PR gate: the cask must lint, audit (URL + sha256 verified online), and
+# actually install + launch-check on a current macOS runner.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  cask:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: brew style Casks/pwrsnap.rb
+      - run: brew audit --cask --online Casks/pwrsnap.rb
+      - run: brew install --cask Casks/pwrsnap.rb
+      - run: |
+          test -d /Applications/PwrSnap.app
+          /usr/bin/codesign -dv --verbose=2 /Applications/PwrSnap.app 2>&1 | grep -q "Developer ID Application: PwrDrvr LLC"
+          /usr/sbin/spctl -a -vv /Applications/PwrSnap.app
+      - run: brew uninstall --cask pwrsnap

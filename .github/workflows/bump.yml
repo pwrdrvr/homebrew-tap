@@ -1,0 +1,65 @@
+# Keep Casks/pwrsnap.rb pointed at the latest *stable* PwrSnap release.
+#
+# Runs every six hours (and on demand). When GitHub's /releases/latest for
+# pwrdrvr/PwrSnap is newer than the cask, it re-hashes the DMG, lints +
+# audits the cask, and opens a PR. Merge the PR and the tap is updated —
+# users get it on their next `brew update`.
+name: Bump pwrsnap cask
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "PwrSnap version to pin (no leading v). Empty = latest stable."
+        required: false
+        default: ""
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          v="${REQUESTED#v}"
+          if [ -z "$v" ]; then
+            v="$(gh api repos/pwrdrvr/PwrSnap/releases/latest --jq .tag_name | sed 's/^v//')"
+          fi
+          current="$(sed -nE 's/^  version "(.*)"/\1/p' Casks/pwrsnap.rb)"
+          echo "version=$v"  >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "latest stable: $v — cask has: $current"
+
+      - if: steps.resolve.outputs.version != steps.resolve.outputs.current
+        name: Rewrite version + sha256
+        run: scripts/bump-cask.sh "${{ steps.resolve.outputs.version }}"
+
+      - if: steps.resolve.outputs.version != steps.resolve.outputs.current
+        name: Lint + audit the cask
+        run: |
+          brew style Casks/pwrsnap.rb
+          brew audit --cask --online Casks/pwrsnap.rb
+
+      - if: steps.resolve.outputs.version != steps.resolve.outputs.current
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: bump/pwrsnap-${{ steps.resolve.outputs.version }}
+          title: "pwrsnap ${{ steps.resolve.outputs.version }}"
+          commit-message: "pwrsnap ${{ steps.resolve.outputs.version }}"
+          body: |
+            Automated bump to PwrSnap ${{ steps.resolve.outputs.version }}
+            (https://github.com/pwrdrvr/PwrSnap/releases/tag/v${{ steps.resolve.outputs.version }}).
+
+            `brew style` and `brew audit --cask --online` passed on the runner.
+          delete-branch: true
