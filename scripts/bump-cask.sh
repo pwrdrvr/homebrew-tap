@@ -17,8 +17,8 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 
 echo "Fetching ${url}"
-curl -fsSL --retry 3 -o "$tmp/PwrSnap.dmg" "${url}"
-sha="$(shasum -a 256 "$tmp/PwrSnap.dmg" | cut -d' ' -f1)"
+curl -fsSL --retry 3 -o "${tmp}/PwrSnap.dmg" "${url}"
+sha="$(shasum -a 256 "${tmp}/PwrSnap.dmg" | cut -d' ' -f1)"
 
 # perl -pi is portable across macOS + Linux (sed -i differs).
 perl -pi -e "s/^  version \".*\"/  version \"${v}\"/; s/^  sha256 \".*\"/  sha256 \"${sha}\"/" "${cask}"
