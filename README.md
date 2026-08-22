@@ -16,6 +16,24 @@ That one-liner taps this repository and installs the signed, notarized
 universal DMG from [GitHub Releases](https://github.com/pwrdrvr/PwrSnap/releases/latest).
 First launch is one double-click — no "unidentified developer" warning.
 
+### If Homebrew says the tap isn't trusted
+
+Homebrew 6.0 (June 2026) added [tap trust](https://docs.brew.sh/Tap-Trust):
+non-official taps must be trusted before Homebrew will load their Ruby.
+Read-only operations against this cask work untrusted on current 6.0.x,
+and the one-liner above is exercised on a clean macOS runner by
+[CI](.github/workflows/ci.yml) on every PR — but if you ever see
+`Not trusted cask` or a "the following taps are not trusted" warning:
+
+```bash
+brew trust --cask pwrdrvr/tap/pwrsnap
+```
+
+Trust the single cask, not the whole tap — whole-tap trust also covers
+every future formula, cask, and command added here. (Official taps such
+as `homebrew/cask` need no trust at all, which is one more reason to
+move this cask there once PwrSnap clears the notability bar.)
+
 Updating:
 
 ```bash
