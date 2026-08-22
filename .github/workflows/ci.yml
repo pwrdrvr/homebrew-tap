@@ -10,6 +10,11 @@ on:
 jobs:
   cask:
     runs-on: macos-latest
+    # `brew audit --online` queries the GitHub API for repo metadata. Hosted
+    # runners share an egress IP, so the anonymous 60/hr limit is routinely
+    # already spent by the time a job starts; the job token lifts it.
+    env:
+      HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v5
 
