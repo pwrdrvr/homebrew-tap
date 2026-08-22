@@ -33,13 +33,13 @@ jobs:
         run: |
           set -euo pipefail
           v="${REQUESTED#v}"
-          if [ -z "$v" ]; then
+          if [ -z "${v}" ]; then
             v="$(gh api repos/pwrdrvr/PwrSnap/releases/latest --jq .tag_name | sed 's/^v//')"
           fi
           current="$(sed -nE 's/^  version "(.*)"/\1/p' Casks/pwrsnap.rb)"
-          echo "version=$v"  >> "$GITHUB_OUTPUT"
-          echo "current=$current" >> "$GITHUB_OUTPUT"
-          echo "latest stable: $v — cask has: $current"
+          echo "version=${v}"  >> "${GITHUB_OUTPUT}"
+          echo "current=${current}" >> "${GITHUB_OUTPUT}"
+          echo "latest stable: ${v} — cask has: ${current}"
 
       - if: steps.resolve.outputs.version != steps.resolve.outputs.current
         name: Rewrite version + sha256
