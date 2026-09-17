@@ -23,6 +23,9 @@ permissions:
 jobs:
   bump:
     runs-on: macos-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      current: ${{ steps.resolve.outputs.current }}
     # Same reason as ci.yml: `brew audit --online` needs an authenticated
     # GitHub API to clear the shared-runner rate limit.
     env:
@@ -80,3 +83,72 @@ jobs:
 
             `brew style` and `brew audit --cask --online` passed on the runner.
           delete-branch: true
+
+  # A scheduled job that fails silently is the same as no job at all. This
+  # workflow failed 15 consecutive runs on a Homebrew deprecation while the
+  # cask sat four releases behind (1.0.3 vs 1.1.2) and nobody noticed -- the
+  # 85 runs before that were all no-ops, so the bump path had never actually
+  # run since it was merged. Email on a failed cron was evidently not enough,
+  # so a failure now files an issue that stays open until someone fixes it.
+  notify:
+    needs: bump
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: File a tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RESOLVED: ${{ needs.bump.outputs.version }}
+          CURRENT: ${{ needs.bump.outputs.current }}
+        run: |
+          set -euo pipefail
+
+          gh label create bump-failure \
+            --repo "${GITHUB_REPOSITORY}" \
+            --color b60205 \
+            --description "The scheduled cask bump is failing" \
+            --force
+
+          # One issue per outage, not one per run -- this cron fires every six hours,
+          # so commenting on each failure would bury the signal it exists to raise.
+          existing="$(gh issue list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --label bump-failure \
+            --state open \
+            --limit 1 \
+            --json number \
+            --jq '.[0].number // empty')"
+          if [ -n "${existing}" ]; then
+            echo "Issue #${existing} already tracks this outage; not filing another."
+            exit 0
+          fi
+
+          # `resolve` may itself be what failed, so neither version is guaranteed set.
+          body="${RUNNER_TEMP}/bump-failure.md"
+          {
+            echo "The scheduled \`bump.yml\` run failed, so \`Casks/pwrsnap.rb\` is **not**"
+            echo "tracking the latest stable PwrSnap release."
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Cask is pinned at | \`${CURRENT:-unknown}\` |"
+            echo "| Latest stable resolved to | \`${RESOLVED:-unresolved}\` |"
+            echo "| Failed run | ${RUN_URL} |"
+            echo
+            echo "Until this is fixed, \`brew install --cask pwrdrvr/tap/pwrsnap\` and"
+            echo "\`brew upgrade\` keep serving the pinned version. Users who already have"
+            echo "the app still get updates in-app (the cask is \`auto_updates true\`);"
+            echo "new installs do not."
+            echo
+            echo "Filed once per outage. Close it once the bump PR merges -- the next"
+            echo "failure opens a fresh one."
+          } >"${body}"
+
+          gh issue create \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Cask bump is failing -- pwrsnap pinned at ${CURRENT:-unknown}" \
+            --label bump-failure \
+            --body-file "${body}"
