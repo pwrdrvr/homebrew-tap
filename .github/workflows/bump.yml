@@ -39,14 +39,52 @@ jobs:
           REQUESTED: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          v="${REQUESTED#v}"
-          if [ -z "${v}" ]; then
-            v="$(gh api repos/pwrdrvr/PwrSnap/releases/latest --jq .tag_name | sed 's/^v//')"
-          fi
           current="$(sed -nE 's/^  version "(.*)"/\1/p' Casks/pwrsnap.rb)"
+          v="${REQUESTED#v}"
+
+          # Compare as versions, not as strings: 1.10.0 is newer than 1.9.0.
+          newer_than_cask() {
+            [ "${1}" != "${current}" ] &&
+              [ "$(printf '%s\n%s\n' "${1}" "${current}" | sort -V | tail -1)" = "${1}" ]
+          }
+
+          if [ -n "${v}" ]; then
+            # An operator typed a version. Honour it, including a deliberate
+            # rollback -- a bad stable release is exactly when you need one --
+            # but do not let it happen quietly.
+            if [ "${v}" != "${current}" ] && ! newer_than_cask "${v}"; then
+              echo "::warning::pinning pwrsnap back to ${v} from ${current} (explicitly requested)"
+            fi
+          else
+            v="$(gh api repos/pwrdrvr/PwrSnap/releases/latest --jq .tag_name | sed 's/^v//')"
+
+            # /releases/latest can legitimately point BACKWARDS, and this is
+            # not a mistake to be corrected upstream. A 1.0.x maintenance
+            # patch is marked `latest` on GitHub after 1.1 has shipped,
+            # because PwrSnap's in-app updater reads that pointer and 1.0
+            # users would otherwise never be offered the patch. The app
+            # refuses the resulting downgrade. Homebrew will not:
+            #
+            #   # Cask::Cask#outdated_version
+            #   return if installed_version == version
+            #
+            # That is plain equality with no ordering, so a cask that moves
+            # backwards downgrades anyone running `brew upgrade --cask
+            # pwrsnap` (naming a cask forces greedy, which skips the
+            # `auto_updates` guard) and hands every NEW `brew install` the
+            # older build -- that one has no installed version to compare
+            # against, and so no defence at all.
+            if [ "${v}" != "${current}" ] && ! newer_than_cask "${v}"; then
+              echo "::notice::Holding at ${current}: GitHub's latest stable is ${v}, which is older. Expected while a maintenance patch is marked latest."
+              echo "Held at \`${current}\` — GitHub's latest stable is \`${v}\`, which is older. Expected while a maintenance patch is marked latest." \
+                >> "${GITHUB_STEP_SUMMARY}"
+              v="${current}"
+            fi
+          fi
+
           echo "version=${v}"  >> "${GITHUB_OUTPUT}"
           echo "current=${current}" >> "${GITHUB_OUTPUT}"
-          echo "latest stable: ${v} — cask has: ${current}"
+          echo "resolved: ${v} — cask has: ${current}"
 
       - if: steps.resolve.outputs.version != steps.resolve.outputs.current
         name: Rewrite version + sha256
