@@ -1,9 +1,12 @@
 cask "pwrsnap" do
-  version "1.0.3"
-  sha256 "01fe32d69da170e8976e53862f10fbbe5cf713b8ec06c2b2dbc65a7773a84dc5"
+  version "1.1.2"
+  sha256 "efdd7ee2706107f2ea4d55ab6b881330eeecea7af7bcc61f21d4f195b629292e"
 
-  url "https://github.com/pwrdrvr/PwrSnap/releases/download/v#{version}/PwrSnap-#{version}-universal.dmg",
-      verified: "github.com/pwrdrvr/PwrSnap/"
+  # No `verified:` — Homebrew deprecated the parameter (it is now an explicit
+  # no-op in `Cask::DSL#url`, and `audit_unnecessary_verified` fails the audit
+  # on it). Re-adding it breaks `brew audit --cask`, which is what silently
+  # pinned this cask to 1.0.3 through four releases.
+  url "https://github.com/pwrdrvr/PwrSnap/releases/download/v#{version}/PwrSnap-#{version}-universal.dmg"
   name "PwrSnap"
   desc "Screen capture, annotation, and recording with optional AI assist"
   homepage "https://pwrsnap.com/"
