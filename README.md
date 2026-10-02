@@ -2,6 +2,28 @@
 
 Homebrew tap for [PwrDrvr LLC](https://pwrdrvr.com) software.
 
+## PwrAgent
+
+[PwrAgent](https://pwragent.ai) is a thread-centric coding agent desktop app.
+Its cask selects the signed/notarized arm64 DMG on Apple Silicon and universal
+DMG on Intel, from promoted stable [GitHub releases](https://github.com/pwrdrvr/PwrAgent/releases/latest).
+
+```bash
+brew install --cask pwrdrvr/tap/pwragent
+brew upgrade --cask --greedy pwrdrvr/tap/pwragent
+brew uninstall --cask pwrdrvr/tap/pwragent
+```
+
+If required, trust only this cask with `brew trust --cask pwrdrvr/tap/pwragent`.
+Uninstall preserves `~/.pwragent`, including profiles and thread state.
+
+The [PwrAgent distribution workflow](https://github.com/pwrdrvr/PwrAgent/actions/workflows/package-manager-distribution.yml)
+prepares update PRs after stable promotion and daily reconciliation, validates
+both macOS architectures and fresh installs/upgrades, and leaves merging to
+maintainers. [CI](.github/workflows/ci.yml) checks both casks. Alpha/beta builds
+do not change this cask. For the release procedure and credential setup, see
+[the PwrAgent distribution runbook](https://github.com/pwrdrvr/PwrAgent/blob/main/docs/package-manager-distribution.md).
+
 ## PwrSnap
 
 [PwrSnap](https://pwrsnap.com) — open-source screen capture, annotation,
