@@ -97,3 +97,28 @@ isn't there yet. This tap has no such gate and works identically for
 users — the command is just one token longer. When the repo clears the
 bar, the cask moves to `homebrew/cask` and `brew install --cask pwrsnap`
 starts working without the tap prefix.
+
+## PwrGit
+
+The `pwrgit` cask uses PwrGit's promoted Stable Latest release, with native
+arm64 on Apple Silicon and the universal DMG on Intel:
+
+```sh
+brew install --cask pwrdrvr/tap/pwrgit
+brew upgrade --cask --greedy pwrdrvr/tap/pwrgit
+```
+
+The six-hour `bump-pwrgit.yml` workflow (also manually dispatchable) verifies
+actual downloaded sizes and SHA-256 against GitHub's release asset digests,
+rejects prereleases/downgrades and opens a version update PR. It dispatches CI
+explicitly because PRs created by `GITHUB_TOKEN` do not trigger CI automatically.
+CI audits, installs, verifies signing/Gatekeeper and uninstalls on Intel and
+Apple Silicon. Review and merge the PR; an open PR is not a published cask.
+On subsequent versions test an older-to-newer `brew upgrade --cask --greedy` on
+a disposable machine and verify retained settings/repositories. No prior
+Homebrew version exists for initial registration.
+
+After merge run `brew update`, inspect `brew info --cask pwrdrvr/tap/pwrgit`
+and test installation before describing the version as live. The cask retains
+all user data on uninstall and deliberately has no `zap` stanza. Bump failures
+open one tracking issue per outage with the failed run and a recovery action.

@@ -1,0 +1,74 @@
+name: Bump pwrgit cask
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "29 */6 * * *"
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+jobs:
+  bump:
+    runs-on: macos-26
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Download, hash and compare Stable Latest
+        run: node scripts/bump-pwrgit.mjs
+      - name: Style and audit
+        run: |
+          set -euo pipefail
+          taps="$(brew --repository)/Library/Taps/pwrdrvr"
+          mkdir -p "$taps"
+          ln -s "$GITHUB_WORKSPACE" "$taps/homebrew-tap"
+          if brew trust --help >/dev/null 2>&1; then brew trust --cask pwrdrvr/tap/pwrgit; fi
+          brew style --cask pwrdrvr/tap/pwrgit
+          brew audit --cask --online pwrdrvr/tap/pwrgit
+      - name: Resolve branch version
+        id: version
+        run: |
+          version="$(sed -nE 's/^  version "([0-9]+\.[0-9]+\.[0-9]+)"/\1/p' Casks/pwrgit.rb)"
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: peter-evans/create-pull-request@v7
+        id: pr
+        with:
+          branch: bump/pwrgit-${{ steps.version.outputs.version }}
+          title: "pwrgit ${{ steps.version.outputs.version }}"
+          commit-message: "pwrgit ${{ steps.version.outputs.version }}"
+          body: |
+            Updates PwrGit to promoted Stable Latest with architecture-specific
+            versioned DMGs. Both downloaded hashes and sizes match GitHub's asset
+            digests; style and online audit passed. Install/uninstall and signature
+            checks run in CI before merge. Publication still requires merging this
+            PR and refreshing the user's tap cache.
+          delete-branch: true
+      # GITHUB_TOKEN-created PRs don't emit CI events. Dispatch explicitly.
+      - name: Start install validation on the update branch
+        if: steps.pr.outputs.pull-request-operation == 'created' || steps.pr.outputs.pull-request-operation == 'updated'
+        env:
+          BRANCH: bump/pwrgit-${{ steps.version.outputs.version }}
+        run: gh workflow run ci.yml --ref "$BRANCH"
+  notify:
+    needs: bump
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Track failed bump until resolved
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh label create pwrgit-bump-failure --repo "$GITHUB_REPOSITORY" --color b60205 --force
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --label pwrgit-bump-failure --state open --json number --jq '.[0].number // empty')"
+          if [ -z "$existing" ]; then
+            gh issue create --repo "$GITHUB_REPOSITORY" --title 'PwrGit cask bump failed' --label pwrgit-bump-failure --body "Inspect $RUN_URL, resolve the failure, dispatch bump-pwrgit.yml, and merge its validated PR. Close this issue after default-branch and client version verification."
+          fi
