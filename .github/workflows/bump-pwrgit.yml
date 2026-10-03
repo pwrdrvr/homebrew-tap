@@ -13,9 +13,12 @@ on:
     paths:
       - Casks/pwrgit.rb
       - scripts/*pwrgit*
+      - scripts/installer-cache.py
+      - .github/actions/cache-installer/**
       - .github/workflows/bump-pwrgit.yml
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: pwrgit-sync-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
   cancel-in-progress: false
@@ -27,6 +30,7 @@ jobs:
       changed: ${{ steps.prepare.outputs.changed }}
       version: ${{ steps.prepare.outputs.version }}
       previous: ${{ steps.prepare.outputs.previous }}
+      matrix: ${{ steps.validation.outputs.matrix || '{"include":[]}' }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -36,13 +40,47 @@ jobs:
           node-version: 24
           package-manager-cache: false
       - run: node --test scripts/pwrgit.test.mjs
-      - name: Resolve Latest and verify actual artifact hashes
+      - name: Resolve Latest without downloading installers
         id: prepare
         env:
           GH_TOKEN: ${{ secrets.DISTRIBUTION_READ_TOKEN || github.token }}
           REQUESTED_VERSION: ${{ inputs.version }}
+        run: node scripts/bump-pwrgit.mjs --plan distribution
+      - name: Restore and verify ARM installer
+        if: steps.prepare.outputs.changed == 'true'
+        id: arm64
+        uses: ./.github/actions/cache-installer
+        with:
+          url: ${{ steps.prepare.outputs.arm64_url }}
+          sha256: ${{ steps.prepare.outputs.arm64_sha256 }}
+          size: ${{ steps.prepare.outputs.arm64_size }}
+          version: ${{ steps.prepare.outputs.version }}
+          architecture: arm64
+      - name: Restore and verify universal installer
+        if: steps.prepare.outputs.changed == 'true'
+        id: universal
+        uses: ./.github/actions/cache-installer
+        with:
+          url: ${{ steps.prepare.outputs.universal_url }}
+          sha256: ${{ steps.prepare.outputs.universal_sha256 }}
+          size: ${{ steps.prepare.outputs.universal_size }}
+          version: ${{ steps.prepare.outputs.version }}
+          architecture: universal
+      - name: Rewrite cask from verified installer bytes
+        if: steps.prepare.outputs.changed == 'true'
+        env:
+          ARM64_INSTALLER: ${{ steps.arm64.outputs.path }}
+          UNIVERSAL_INSTALLER: ${{ steps.universal.outputs.path }}
         run: node scripts/bump-pwrgit.mjs distribution
+      - name: Reuse an identical successful native upgrade validation
+        id: validation
+        if: steps.prepare.outputs.changed == 'true' || github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.DISTRIBUTION_READ_TOKEN || github.token }}
+          BASE_REF: ${{ github.event.pull_request.base.ref || 'main' }}
+        run: python3 scripts/validation-plan.py --pwrgit-sync distribution
       - uses: actions/upload-artifact@v4
+        if: steps.prepare.outputs.changed == 'true' || github.event_name == 'pull_request'
         with:
           name: pwrgit-candidate
           path: distribution
@@ -55,14 +93,14 @@ jobs:
         run: echo "PwrGit Latest=$VERSION; tap=$CURRENT; update required=$CHANGED" >> "$GITHUB_STEP_SUMMARY"
   validate:
     needs: prepare
-    if: needs.prepare.outputs.changed == 'true' || github.event_name == 'pull_request'
+    if: fromJSON(needs.prepare.outputs.matrix).include[0] != null
     strategy:
       fail-fast: false
-      matrix:
-        os: [macos-26, macos-15-intel]
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     env:
+      GH_TOKEN: ${{ secrets.DISTRIBUTION_READ_TOKEN || github.token }}
       HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.DISTRIBUTION_READ_TOKEN || github.token }}
     steps:
       - uses: actions/checkout@v5
@@ -72,13 +110,42 @@ jobs:
         with:
           name: pwrgit-candidate
           path: distribution
+      - name: Link tap and preserve published cask
+        run: |
+          mkdir -p "$(brew --repository)/Library/Taps/pwrdrvr"
+          ln -s "$PWD" "$(brew --repository)/Library/Taps/pwrdrvr/homebrew-tap"
+          cp Casks/pwrgit.rb "$RUNNER_TEMP/published-pwrgit.rb"
+      - name: Restore previous native installer for upgrade coverage
+        if: needs.prepare.outputs.changed == 'true' && needs.prepare.outputs.previous != needs.prepare.outputs.version
+        uses: ./.github/actions/cache-installer
+        with:
+          token: pwrdrvr/tap/pwrgit
+      - name: Select candidate for native cache resolution
+        run: cp distribution/Casks/pwrgit.rb Casks/pwrgit.rb
+      - name: Restore candidate native installer into Homebrew's cache
+        uses: ./.github/actions/cache-installer
+        with:
+          token: pwrdrvr/tap/pwrgit
+      - name: Restore published cask for upgrade test
+        run: cp "$RUNNER_TEMP/published-pwrgit.rb" Casks/pwrgit.rb
       - name: Audit and test native install, upgrade and uninstall
         env:
           PREVIOUS: ${{ needs.prepare.outputs.previous }}
         run: bash scripts/verify-pwrgit.sh distribution/Casks/pwrgit.rb "$PREVIOUS"
+      - name: Record successful native upgrade validation
+        env:
+          KEY: ${{ matrix.key }}
+        run: |
+          mkdir -p .local/validation/pwrgit-sync
+          printf '%s' "$KEY" > .local/validation/pwrgit-sync/key
+      - uses: actions/cache/save@v4
+        with:
+          path: .local/validation/pwrgit-sync
+          key: ${{ matrix.key }}
+          enableCrossOsArchive: true
   publish:
     needs: [prepare, validate]
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.prepare.outputs.changed == 'true'
+    if: always() && !failure() && !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.prepare.outputs.changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

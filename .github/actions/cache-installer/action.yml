@@ -1,0 +1,59 @@
+name: Verified release installer
+description: Restore exact release bytes, verify SHA-256 and size, and optionally seed Homebrew
+inputs:
+  token:
+    description: Fully qualified Homebrew cask (resolves the native installer and release digest)
+    default: ''
+  url:
+    description: Immutable release URL for explicit hashing
+    default: ''
+  sha256:
+    description: Expected GitHub release SHA-256
+    default: ''
+  version:
+    description: Release version
+    default: ''
+  architecture:
+    description: Installer architecture, arm64 or universal
+    default: ''
+  size:
+    description: Expected release size
+    default: ''
+outputs:
+  path:
+    description: Verified installer path
+    value: ${{ steps.plan.outputs.path }}
+runs:
+  using: composite
+  steps:
+    - id: plan
+      shell: bash
+      env:
+        TOKEN: ${{ inputs.token }}
+        URL: ${{ inputs.url }}
+        SHA256: ${{ inputs.sha256 }}
+        VERSION: ${{ inputs.version }}
+        ARCHITECTURE: ${{ inputs.architecture }}
+        SIZE: ${{ inputs.size }}
+      run: |
+        python3 scripts/installer-cache.py plan --plan "$RUNNER_TEMP/installer-plan.json" \
+          --token "$TOKEN" --url "$URL" --sha256 "$SHA256" --version "$VERSION" \
+          --architecture "$ARCHITECTURE" --size "$SIZE"
+    # No restore-keys: even a fallback to another checksum is inappropriate.
+    # Stable relative paths + cross-OS archives let Linux hashing and native
+    # Mac validation share bytes. GitHub still enforces ref/PR cache isolation.
+    - uses: actions/cache/restore@v4
+      id: restore
+      with:
+        path: ${{ steps.plan.outputs.path }}
+        key: ${{ steps.plan.outputs.key }}
+        enableCrossOsArchive: true
+    - name: Verify bytes and seed Homebrew
+      shell: bash
+      run: python3 scripts/installer-cache.py ensure --plan "$RUNNER_TEMP/installer-plan.json"
+    - uses: actions/cache/save@v4
+      if: steps.restore.outputs.cache-hit != 'true'
+      with:
+        path: ${{ steps.plan.outputs.path }}
+        key: ${{ steps.plan.outputs.key }}
+        enableCrossOsArchive: true

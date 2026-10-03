@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { prepareCask, assetsFor } from "./bump-pwrgit.mjs";
+import { prepareCask, assetsFor, resolveCask } from "./bump-pwrgit.mjs";
 import { publish } from "./publish-pwrgit.mjs";
 
 const current = `cask "pwrgit" do\n  version "0.27.0"\n  sha256 arm:   "${"a".repeat(64)}",\n         intel: "${"b".repeat(64)}"\nend\n`;
@@ -31,6 +31,15 @@ test("downloads both architectures and skips unchanged versions", async () => {
   assert.match(plan.cask, /version "0.29.0"/);
   const unchanged = await prepareCask(plan.cask, release(), async () => { throw new Error("must not download"); });
   assert.equal(unchanged.changed, false);
+});
+test("planning performs no downloads and replaced same-version bytes require validation", async () => {
+  assert.equal(resolveCask(current, release()).changed, true);
+  const plan = await prepareCask(current, release(), fetchAsset);
+  assert.equal(resolveCask(plan.cask, release()).changed, false);
+  const replaced = release();
+  replaced.assets[0].digest = `sha256:${"f".repeat(64)}`;
+  assert.equal(resolveCask(plan.cask, replaced).changed, true);
+  await assert.rejects(prepareCask(plan.cask, replaced, fetchAsset), /digest\/size mismatch/);
 });
 test("publishes only the validated cask with a compare-and-swap and reads it back", async () => {
   const plan = await prepareCask(current, release(), fetchAsset);

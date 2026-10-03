@@ -4,18 +4,24 @@ name: CI
 
 on:
   workflow_dispatch:
+    inputs:
+      force-validation:
+        description: Run native validation even if this exact candidate already passed (installer bytes still cached)
+        type: boolean
+        default: false
   pull_request:
   push:
     branches: [main]
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   select:
     runs-on: ubuntu-latest
     outputs:
-      casks: ${{ steps.select.outputs.casks }}
+      matrix: ${{ steps.validation.outputs.matrix }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -31,23 +37,29 @@ jobs:
         run: |
           set -euo pipefail
           selection="$(python3 scripts/select-casks.py --event "$EVENT" --base "$BASE")"
-          echo "casks=$(jq -c '.casks' <<<"$selection")" >>"$GITHUB_OUTPUT"
+          echo "$selection" > "$RUNNER_TEMP/cask-selection.json"
           echo "$selection" >>"$GITHUB_STEP_SUMMARY"
+      - name: Reuse identical successful native validations for every app
+        id: validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_REF: ${{ github.event.pull_request.base.ref || 'main' }}
+          FORCE_VALIDATION: ${{ inputs.force-validation || false }}
+        run: python3 scripts/validation-plan.py --selection "$RUNNER_TEMP/cask-selection.json"
 
   cask:
     needs: select
-    if: needs.select.outputs.casks != '[]'
+    if: fromJSON(needs.select.outputs.matrix).include[0] != null
     strategy:
       fail-fast: false
-      matrix:
-        cask: ${{ fromJSON(needs.select.outputs.casks) }}
-        os: [macos-26, macos-15-intel]
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     # `brew audit --online` queries the GitHub API for repo metadata. Hosted
     # runners share an egress IP, so the anonymous 60/hr limit is routinely
     # already spent by the time a job starts; the job token lifts it.
     env:
       CASK: ${{ matrix.cask }}
+      GH_TOKEN: ${{ github.token }}
       HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v5
@@ -86,7 +98,12 @@ jobs:
             echo "brew trust not available on this Homebrew; skipping"
           fi
 
-      - name: Audit the cask against its live download
+      - name: Restore verified native installer into Homebrew's cache
+        uses: ./.github/actions/cache-installer
+        with:
+          token: pwrdrvr/tap/${{ matrix.cask }}
+
+      - name: Audit the cask against its release
         run: brew audit --cask --online "pwrdrvr/tap/${CASK}"
 
       - name: Install
@@ -118,3 +135,15 @@ jobs:
       - name: Uninstall
         if: always() && steps.install.outcome == 'success'
         run: brew uninstall --cask "pwrdrvr/tap/${CASK}"
+
+      - name: Record successful native validation
+        env:
+          KEY: ${{ matrix.key }}
+        run: |
+          mkdir -p .local/validation/cask
+          printf '%s' "$KEY" > .local/validation/cask/key
+      - uses: actions/cache/save@v4
+        with:
+          path: .local/validation/cask
+          key: ${{ matrix.key }}
+          enableCrossOsArchive: true
