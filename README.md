@@ -108,17 +108,31 @@ brew install --cask pwrdrvr/tap/pwrgit
 brew upgrade --cask --greedy pwrdrvr/tap/pwrgit
 ```
 
-The six-hour `bump-pwrgit.yml` workflow (also manually dispatchable) verifies
-actual downloaded sizes and SHA-256 against GitHub's release asset digests,
-rejects prereleases/downgrades and opens a version update PR. It dispatches CI
-explicitly because PRs created by `GITHUB_TOKEN` do not trigger CI automatically.
-CI audits, installs, verifies signing/Gatekeeper and uninstalls on Intel and
-Apple Silicon. Review and merge the PR; an open PR is not a published cask.
-On subsequent versions test an older-to-newer `brew upgrade --cask --greedy` on
-a disposable machine and verify retained settings/repositories. No prior
-Homebrew version exists for initial registration.
+The tap owns publication. `bump-pwrgit.yml` accepts an immediate dispatch after
+PwrGit is promoted to Stable Latest and checks Latest every 15 minutes as a
+fallback. It downloads both versioned DMGs and checks their sizes and SHA-256
+against GitHub, then audits, installs/upgrades, verifies bundle identity,
+architectures, Developer ID/Gatekeeper, and uninstalls on Intel and Apple Silicon.
+Only after both jobs pass does its own `GITHUB_TOKEN` commit the single validated
+cask to `main`. Routine releases require no bump PR, workflow approval or merge.
+The publisher rechecks Latest, artifact metadata and the previous cask SHA before
+committing; concurrent changes fail rather than overwrite another update.
+
+PwrGit's release workflow uses `HOMEBREW_TAP_DISPATCH_TOKEN` solely to dispatch
+this tap workflow: a fine-grained PAT owned by `pwrdrvr`, selected repository
+`homebrew-tap`, Actions write permission. The existing public-read-only
+`DISTRIBUTION_READ_TOKEN` is used for public reads and cannot dispatch workflows.
+No cross-repository contents-write credential is needed. The release skill can
+also dispatch using the maintainer's existing GitHub CLI authentication.
+
+This registration PR must be merged once before automatic publication is live.
+Scheduling is best effort on GitHub Actions; immediate dispatch is the normal
+promotion path. Failed runs file one tracking issue per outage with a direct run
+link. The product release workflow waits for the cask to appear on tap `main`
+and reports a direct run link on failure. Check the default branch and refresh
+Homebrew before declaring client discovery/install verified.
 
 After merge run `brew update`, inspect `brew info --cask pwrdrvr/tap/pwrgit`
 and test installation before describing the version as live. The cask retains
-all user data on uninstall and deliberately has no `zap` stanza. Bump failures
+all user data on uninstall and deliberately has no `zap` stanza. Publication failures
 open one tracking issue per outage with the failed run and a recovery action.
