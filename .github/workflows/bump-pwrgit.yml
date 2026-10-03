@@ -1,0 +1,121 @@
+name: Publish PwrGit Stable Latest
+run-name: PwrGit Homebrew sync ${{ inputs.version || 'Stable Latest' }}
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Promoted stable version without v (empty resolves Latest)
+        required: false
+        type: string
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+  pull_request:
+    paths:
+      - Casks/pwrgit.rb
+      - scripts/*pwrgit*
+      - .github/workflows/bump-pwrgit.yml
+permissions:
+  contents: read
+concurrency:
+  group: pwrgit-sync-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      changed: ${{ steps.prepare.outputs.changed }}
+      version: ${{ steps.prepare.outputs.version }}
+      previous: ${{ steps.prepare.outputs.previous }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: node --test scripts/pwrgit.test.mjs
+      - name: Resolve Latest and verify actual artifact hashes
+        id: prepare
+        env:
+          GH_TOKEN: ${{ secrets.DISTRIBUTION_READ_TOKEN || github.token }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: node scripts/bump-pwrgit.mjs distribution
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pwrgit-candidate
+          path: distribution
+          retention-days: 3
+      - name: Report resolved target
+        env:
+          VERSION: ${{ steps.prepare.outputs.version }}
+          CURRENT: ${{ steps.prepare.outputs.previous }}
+          CHANGED: ${{ steps.prepare.outputs.changed }}
+        run: echo "PwrGit Latest=$VERSION; tap=$CURRENT; update required=$CHANGED" >> "$GITHUB_STEP_SUMMARY"
+  validate:
+    needs: prepare
+    if: needs.prepare.outputs.changed == 'true' || github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-26, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.DISTRIBUTION_READ_TOKEN || github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: pwrgit-candidate
+          path: distribution
+      - name: Audit and test native install, upgrade and uninstall
+        env:
+          PREVIOUS: ${{ needs.prepare.outputs.previous }}
+        run: bash scripts/verify-pwrgit.sh distribution/Casks/pwrgit.rb "$PREVIOUS"
+  publish:
+    needs: [prepare, validate]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.prepare.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: pwrgit-candidate
+          path: distribution
+      - name: Publish the validated cask to tap main and verify it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/publish-pwrgit.mjs distribution
+  notify:
+    needs: [prepare, validate, publish]
+    if: failure() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Report publication failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TARGET: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh label create pwrgit-bump-failure --repo "$GITHUB_REPOSITORY" --color b60205 --force
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --label pwrgit-bump-failure --state open --json number --jq '.[0].number // empty')"
+          if [ -z "$existing" ]; then
+            gh issue create --repo "$GITHUB_REPOSITORY" --title 'PwrGit Homebrew publication failed' --label pwrgit-bump-failure --body "Target: ${TARGET:-unresolved}. Failed run: $RUN_URL. Fix the failed step and dispatch bump-pwrgit.yml on main. No update PR or merge approval is required. Verify the default-branch cask and fresh client afterward."
+          fi
+          echo "::error::PwrGit Homebrew publication failed. Target=${TARGET:-unresolved}; run=$RUN_URL"

@@ -1,7 +1,7 @@
 # Maintaining the tap
 
-The tap publishes stable macOS releases of [PwrAgent](https://pwragent.ai)
-and [PwrSnap](https://pwrsnap.com). Alpha and beta builds do not update these
+The tap publishes stable macOS releases of [PwrAgent](https://pwragent.ai),
+[PwrSnap](https://pwrsnap.com), and [PwrGit](https://pwrgit.com). Alpha and beta builds do not update these
 casks.
 
 ## PwrAgent releases
@@ -33,6 +33,40 @@ Only the **Stable** train is published here (`/releases/latest`). Alpha
 and beta builds are GitHub Pre-releases; opt in from inside the app under
 Settings → General → Update channel.
 
+## PwrGit releases
+
+[`Casks/pwrgit.rb`](../Casks/pwrgit.rb) uses PwrGit's promoted Stable Latest
+release, with native arm64 on Apple Silicon and the universal DMG on Intel.
+
+The tap owns publication. `bump-pwrgit.yml` accepts an immediate dispatch after
+PwrGit is promoted to Stable Latest and checks Latest every 15 minutes as a
+fallback. It downloads both versioned DMGs and checks their sizes and SHA-256
+against GitHub, then audits, installs/upgrades, verifies bundle identity,
+architectures, Developer ID/Gatekeeper, and uninstalls on Intel and Apple Silicon.
+Only after both jobs pass does its own `GITHUB_TOKEN` commit the single validated
+cask to `main`. Routine releases require no bump PR, workflow approval or merge.
+The publisher rechecks Latest, artifact metadata and the previous cask SHA before
+committing; concurrent changes fail rather than overwrite another update.
+
+PwrGit's release workflow uses `HOMEBREW_TAP_DISPATCH_TOKEN` solely to dispatch
+this tap workflow: a fine-grained PAT owned by `pwrdrvr`, selected repository
+`homebrew-tap`, Actions write permission. The existing public-read-only
+`DISTRIBUTION_READ_TOKEN` is used for public reads and cannot dispatch workflows.
+No cross-repository contents-write credential is needed. The release skill can
+also dispatch using the maintainer's existing GitHub CLI authentication.
+
+This registration PR must be merged once before automatic publication is live.
+Scheduling is best effort on GitHub Actions; immediate dispatch is the normal
+promotion path. Failed runs file one tracking issue per outage with a direct run
+link. The product release workflow waits for the cask to appear on tap `main`
+and reports a direct run link on failure. Check the default branch and refresh
+Homebrew before declaring client discovery/install verified.
+
+After merge run `brew update`, inspect `brew info --cask pwrdrvr/tap/pwrgit`
+and test installation before describing the version as live. The cask retains
+all user data on uninstall and deliberately has no `zap` stanza. Publication failures
+open one tracking issue per outage with the failed run and a recovery action.
+
 ## CI scope
 
 Pull requests validate added or modified `Casks/*.rb` relative to the PR
@@ -61,6 +95,7 @@ hosting:
 
 - [PwrAgent](https://pwragent.ai/assets/screenshots/desktop-hero.png) → `assets/pwragent.png`
 - [PwrSnap](https://pwrsnap.com/assets/screenshots/desktop-hero.png) → `assets/pwrsnap.png`
+- [PwrGit](https://pwrgit.com/assets/screenshots/hero.png) → `assets/pwrgit.png`
 
 When refreshing them, use real app screenshots and keep the README's descriptive
 alt text and links to the product websites.

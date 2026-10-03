@@ -57,10 +57,32 @@ macOS 14 Sonoma or newer · Apple Silicon + Intel
 
 ---
 
+## [PwrGit](https://pwrgit.com)
+
+**Git for people working alongside an agent.**
+
+Keep your repositories and worktrees together in one window. See how branches
+connect in the lineage graph, review changes, and track pull and merge requests
+without losing your place while agents work alongside you.
+
+[![PwrGit desktop with repositories and worktrees in the sidebar, a branch lineage graph, and changes for the selected worktree](docs/assets/pwrgit.png)](https://pwrgit.com)
+
+**Install PwrGit**
+
+```bash
+brew install --cask pwrdrvr/tap/pwrgit
+```
+
+macOS 12 Monterey or newer · Apple Silicon + Intel
+
+[Explore PwrGit](https://pwrgit.com) · [Documentation](https://docs.pwrgit.com) · [Source code](https://github.com/pwrdrvr/PwrGit)
+
+---
+
 <details>
 <summary>Updates, uninstalling, and Homebrew trust</summary>
 
-Both apps update themselves. To update through Homebrew, run the command for your app:
+All three apps update themselves. To update through Homebrew, run the command for your app:
 
 ```bash
 brew upgrade --cask --greedy pwrdrvr/tap/pwragent
@@ -68,6 +90,10 @@ brew upgrade --cask --greedy pwrdrvr/tap/pwragent
 
 ```bash
 brew upgrade --cask --greedy pwrdrvr/tap/pwrsnap
+```
+
+```bash
+brew upgrade --cask --greedy pwrdrvr/tap/pwrgit
 ```
 
 To uninstall:
@@ -80,6 +106,11 @@ brew uninstall --cask pwrdrvr/tap/pwragent
 brew uninstall --cask pwrdrvr/tap/pwrsnap
 ```
 
+```bash
+brew uninstall --cask pwrdrvr/tap/pwrgit
+```
+
+PwrGit preserves all user data on uninstall.
 PwrAgent preserves `~/.pwragent`, including profiles and thread state.
 For PwrSnap, adding `--zap` also removes settings, caches, and logs; your
 captures in `~/Documents/PwrSnap` are preserved.
@@ -92,6 +123,10 @@ brew trust --cask pwrdrvr/tap/pwragent
 
 ```bash
 brew trust --cask pwrdrvr/tap/pwrsnap
+```
+
+```bash
+brew trust --cask pwrdrvr/tap/pwrgit
 ```
 
 </details>
