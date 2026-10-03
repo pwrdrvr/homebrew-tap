@@ -42,7 +42,7 @@ class CaskSelectionTests(unittest.TestCase):
 
     def select(self, event="pull_request", base=None, check=True):
         command = ["python3", str(SELECTOR), "--event", event]
-        if base is not None or event == "pull_request":
+        if base is not None or event in {"pull_request", "push"}:
             command.extend(["--base", self.base if base is None else base])
         result = subprocess.run(
             command, cwd=self.repo, check=check, capture_output=True, text=True,
@@ -138,11 +138,45 @@ class CaskSelectionTests(unittest.TestCase):
         self.commit()
         self.assertEqual(self.select(), ["pwragent"])
 
-    def test_main_and_manual_runs_select_all(self):
+    def test_manual_runs_select_all(self):
         self.both_in_base()
-        for event in ["push", "workflow_dispatch"]:
-            with self.subTest(event=event):
-                self.assertEqual(self.select(event), ["pwrgit", "pwrsnap"])
+        self.assertEqual(self.select("workflow_dispatch"), ["pwrgit", "pwrsnap"])
+
+    def test_push_single_cask_and_docs_only(self):
+        self.both_in_base()
+        self.write("Casks/pwrgit.rb")
+        self.commit()
+        self.assertEqual(self.select("push"), ["pwrgit"])
+        self.base = self.git("rev-parse", "HEAD")
+        self.write("README.md")
+        self.commit()
+        self.assertEqual(self.select("push"), [])
+
+    def test_multi_commit_push_and_shared_validation_change(self):
+        self.both_in_base()
+        self.write("Casks/pwrgit.rb")
+        self.commit()
+        self.write("README.md")
+        self.commit()
+        self.assertEqual(self.select("push"), ["pwrgit"])
+        self.write(".github/actions/cache-installer/action.yml")
+        self.commit()
+        self.assertEqual(self.select("push"), ["pwrgit", "pwrsnap"])
+
+    def test_push_force_update_uses_two_dot_diff(self):
+        self.both_in_base()
+        original = self.base
+        self.write("Casks/pwrsnap.rb", "changed on replaced main\n")
+        self.commit()
+        self.base = self.git("rev-parse", "HEAD")
+        self.git("checkout", "--detach", original)
+        self.write("Casks/pwrgit.rb")
+        self.commit()
+        self.assertEqual(self.select("push"), ["pwrgit", "pwrsnap"])
+
+    def test_new_branch_push_selects_all(self):
+        self.both_in_base()
+        self.assertEqual(self.select("push", base="0" * 40), ["pwrgit", "pwrsnap"])
 
     def test_empty_tap(self):
         (self.repo / "Casks/pwrsnap.rb").unlink()
@@ -160,11 +194,12 @@ class CaskSelectionTests(unittest.TestCase):
         self.assertEqual(self.select(base=newer_base), ["pwrgit"])
 
     def test_missing_or_invalid_base_fails(self):
-        for base in ["", "does-not-exist"]:
-            with self.subTest(base=base):
-                result = self.select(base=base, check=False)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertEqual(result.stdout, "")
+        for event in ["pull_request", "push"]:
+            for base in ["", "does-not-exist"]:
+                with self.subTest(base=base, event=event):
+                    result = self.select(event, base=base, check=False)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(result.stdout, "")
 
 
 if __name__ == "__main__":

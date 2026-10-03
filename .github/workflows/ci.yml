@@ -27,7 +27,7 @@ jobs:
         id: select
         env:
           EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           set -euo pipefail
           selection="$(python3 scripts/select-casks.py --event "$EVENT" --base "$BASE")"
