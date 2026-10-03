@@ -1,0 +1,171 @@
+"""Exercise selection against real Git histories, including PR/base divergence."""
+
+import json
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SELECTOR = ROOT / "scripts/select-casks.py"
+
+
+class CaskSelectionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(dir=ROOT)
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name)
+        self.git("init", "-q")
+        self.git("config", "user.email", "ci@example.test")
+        self.git("config", "user.name", "CI Test")
+        # Deliberately stale sibling: selection must not load or audit it.
+        self.write("Casks/pwrsnap.rb", 'cask "pwrsnap" do\n  version "1.1.2"\nend\n')
+        self.write("README.md", "Tap\n")
+        self.commit()
+        self.base = self.git("rev-parse", "HEAD")
+
+    def git(self, *args):
+        return subprocess.run(
+            ["git", *args], cwd=self.repo, check=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        ).stdout.strip()
+
+    def write(self, path, content="changed\n"):
+        file = self.repo / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(content)
+
+    def commit(self):
+        self.git("add", "-A")
+        self.git("commit", "-qm", "test change")
+
+    def select(self, event="pull_request", base=None, check=True):
+        command = ["python3", str(SELECTOR), "--event", event]
+        if base is not None or event == "pull_request":
+            command.extend(["--base", self.base if base is None else base])
+        result = subprocess.run(
+            command, cwd=self.repo, check=check, capture_output=True, text=True,
+        )
+        return json.loads(result.stdout)["casks"] if check else result
+
+    def add_pwrgit(self):
+        self.write("Casks/pwrgit.rb", 'cask "pwrgit" do\n  version "0.29.0"\nend\n')
+
+    def both_in_base(self):
+        self.add_pwrgit()
+        self.commit()
+        self.base = self.git("rev-parse", "HEAD")
+
+    def test_registration_excludes_stale_sibling(self):
+        self.add_pwrgit()
+        self.write("scripts/bump-pwrgit.mjs")
+        self.write(".github/workflows/bump-pwrgit.yml")
+        self.write("README.md", "PwrGit registration\n")
+        self.commit()
+        self.assertEqual(self.select(), ["pwrgit"])
+
+    def test_existing_cask_update(self):
+        self.both_in_base()
+        self.write("Casks/pwrgit.rb")
+        self.commit()
+        self.assertEqual(self.select(), ["pwrgit"])
+
+    def test_multiple_cask_updates(self):
+        self.both_in_base()
+        self.write("Casks/pwrgit.rb")
+        self.write("Casks/pwrsnap.rb")
+        self.commit()
+        self.assertEqual(self.select(), ["pwrgit", "pwrsnap"])
+
+    def test_future_registration_requires_no_matrix_edit(self):
+        self.write("Casks/pwragent.rb")
+        self.write("scripts/bump-pwragent.py")
+        self.write(".github/workflows/bump-pwragent.yaml")
+        self.commit()
+        self.assertEqual(self.select(), ["pwragent"])
+
+    def test_shared_changes_select_all(self):
+        self.both_in_base()
+        for path in [".github/workflows/ci.yml", "scripts/select-casks.py",
+                     "tests/test_select_casks.py", "lib/shared.rb", ".github/actions/setup/action.yml"]:
+            with self.subTest(path=path):
+                self.write(path)
+                self.commit()
+                self.assertEqual(self.select(), ["pwrgit", "pwrsnap"])
+                self.base = self.git("rev-parse", "HEAD")
+
+    def test_registration_with_shared_ci_change_selects_all(self):
+        self.add_pwrgit()
+        self.write(".github/workflows/ci.yml")
+        self.commit()
+        self.assertEqual(self.select(), ["pwrgit", "pwrsnap"])
+
+    def test_app_specific_bump_changes(self):
+        self.both_in_base()
+        self.write("scripts/bump-pwrgit.mjs")
+        self.write(".github/workflows/bump-pwrgit.yml")
+        self.commit()
+        self.assertEqual(self.select(), ["pwrgit"])
+
+    def test_legacy_pwrsnap_bump_changes(self):
+        self.both_in_base()
+        self.write("scripts/bump-cask.sh")
+        self.write(".github/workflows/bump.yml")
+        self.commit()
+        self.assertEqual(self.select(), ["pwrsnap"])
+
+    def test_unknown_bump_tooling_is_shared(self):
+        self.both_in_base()
+        self.write("scripts/bump-unknown.py")
+        self.commit()
+        self.assertEqual(self.select(), ["pwrgit", "pwrsnap"])
+
+    def test_docs_only_selects_none(self):
+        self.write("README.md")
+        self.write("docs/example.txt")
+        self.commit()
+        self.assertEqual(self.select(), [])
+
+    def test_deleted_cask_is_not_installed(self):
+        self.both_in_base()
+        (self.repo / "Casks/pwrgit.rb").unlink()
+        self.commit()
+        self.assertEqual(self.select(), [])
+
+    def test_renamed_cask_uses_new_token(self):
+        self.git("mv", "Casks/pwrsnap.rb", "Casks/pwragent.rb")
+        self.commit()
+        self.assertEqual(self.select(), ["pwragent"])
+
+    def test_main_and_manual_runs_select_all(self):
+        self.both_in_base()
+        for event in ["push", "workflow_dispatch"]:
+            with self.subTest(event=event):
+                self.assertEqual(self.select(event), ["pwrgit", "pwrsnap"])
+
+    def test_empty_tap(self):
+        (self.repo / "Casks/pwrsnap.rb").unlink()
+        self.commit()
+        self.assertEqual(self.select("push"), [])
+
+    def test_base_only_changes_do_not_select_siblings(self):
+        self.git("checkout", "-qb", "base-update")
+        self.write("Casks/pwrsnap.rb", 'version "1.1.14"\n')
+        self.commit()
+        newer_base = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-qb", "registration", self.base)
+        self.add_pwrgit()
+        self.commit()
+        self.assertEqual(self.select(base=newer_base), ["pwrgit"])
+
+    def test_missing_or_invalid_base_fails(self):
+        for base in ["", "does-not-exist"]:
+            with self.subTest(base=base):
+                result = self.select(base=base, check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+
+
+if __name__ == "__main__":
+    unittest.main()

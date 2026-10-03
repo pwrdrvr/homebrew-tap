@@ -60,14 +60,34 @@ brew uninstall --cask --zap pwrsnap
   `pwrdrvr/PwrSnap`'s latest stable release every six hours (or on
   demand with a version input), re-hashes the DMG, runs `brew style` +
   `brew audit --cask --online`, and opens a PR.
-- [`.github/workflows/ci.yml`](.github/workflows/ci.yml) installs the
-  cask on a macOS runner and checks the Developer ID signature before a
-  PR can merge.
+- [`.github/workflows/ci.yml`](.github/workflows/ci.yml) checks cask style,
+  online audit, installation, Developer ID signature, Gatekeeper, and
+  uninstall on Apple Silicon and Intel macOS runners.
 - To bump by hand: `scripts/bump-cask.sh 1.0.4`.
 
 Only the **Stable** train is published here (`/releases/latest`). Alpha
 and beta builds are GitHub Pre-releases; opt in from inside the app under
 Settings → General → Update channel.
+
+## CI scope
+
+Pull requests validate added or modified `Casks/*.rb` relative to the PR
+base's merge ancestor. An unchanged sibling cask is not audited, so its
+livecheck drift cannot block another app's registration. Deleted casks
+are skipped, and renamed casks are checked under their new token.
+
+App-specific `scripts/bump-<cask>.sh`, `.mjs`, or `.py` and
+`.github/workflows/bump-<cask>.yml` or `.yaml` changes also select that
+cask. The legacy `scripts/bump-cask.sh` and `bump.yml` select PwrSnap.
+Markdown and `docs/` changes do not select casks. Other changes, including
+shared CI, selection tests, and tap code, validate all present casks.
+Pushes to `main` and manual CI runs also validate all present casks.
+
+New app registrations need no matrix or bundle-name mapping: CI discovers
+cask tokens and reads `app` artifacts from Homebrew metadata. Keep shared
+CI changes in a separate PR when a registration should validate only its
+own cask. Run the selector regression suite with
+`python3 -m unittest discover -s tests -v`.
 
 ## Why a tap and not `homebrew/cask`?
 

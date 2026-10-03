@@ -3,26 +3,62 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
+  select:
+    runs-on: ubuntu-latest
+    outputs:
+      casks: ${{ steps.select.outputs.casks }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Test cask selection
+        run: python3 -m unittest discover -s tests -v
+      - name: Select casks
+        id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          selection="$(python3 scripts/select-casks.py --event "$EVENT" --base "$BASE")"
+          echo "casks=$(jq -c '.casks' <<<"$selection")" >>"$GITHUB_OUTPUT"
+          echo "$selection" >>"$GITHUB_STEP_SUMMARY"
+
   cask:
-    runs-on: macos-latest
+    needs: select
+    if: needs.select.outputs.casks != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        cask: ${{ fromJSON(needs.select.outputs.casks) }}
+        os: [macos-26, macos-15-intel]
+    runs-on: ${{ matrix.os }}
     # `brew audit --online` queries the GitHub API for repo metadata. Hosted
     # runners share an egress IP, so the anonymous 60/hr limit is routinely
     # already spent by the time a job starts; the job token lifts it.
     env:
+      CASK: ${{ matrix.cask }}
       HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       # Scoped to the cask file on purpose. `brew style <tap>` also runs
       # shellcheck/shfmt/actionlint across the repo's scripts and
       # workflows, which is a different job from validating the Ruby.
       - name: Lint the cask
-        run: brew style Casks/pwrsnap.rb
+        run: brew style "Casks/${CASK}.rb"
 
       # Homebrew disabled path-based invocation ("Calling `brew audit
       # [path ...]` is disabled! Use `brew audit [name ...]` instead"), so
@@ -45,16 +81,17 @@ jobs:
         run: |
           set -euo pipefail
           if brew trust --help >/dev/null 2>&1; then
-            brew trust --cask pwrdrvr/tap/pwrsnap
+            brew trust --cask "pwrdrvr/tap/${CASK}"
           else
             echo "brew trust not available on this Homebrew; skipping"
           fi
 
       - name: Audit the cask against its live download
-        run: brew audit --cask --online pwrdrvr/tap/pwrsnap
+        run: brew audit --cask --online "pwrdrvr/tap/${CASK}"
 
       - name: Install
-        run: brew install --cask pwrdrvr/tap/pwrsnap
+        id: install
+        run: brew install --cask "pwrdrvr/tap/${CASK}"
 
       # The `app` stanza moves the real bundle to /Applications (the
       # Caskroom keeps only a symlink pointing back at it), which is what
@@ -63,11 +100,21 @@ jobs:
       - name: Verify the installed app
         run: |
           set -euo pipefail
-          test -d /Applications/PwrSnap.app
-          test ! -L /Applications/PwrSnap.app
-          codesign -dv --verbose=2 /Applications/PwrSnap.app 2>&1 \
-            | grep -q "Authority=Developer ID Application: PwrDrvr LLC"
-          spctl -a -vv /Applications/PwrSnap.app
+          apps="$(brew info --json=v2 --cask "pwrdrvr/tap/${CASK}" | jq -er '
+            [.casks[0].artifacts[] | select(.app) |
+              (.target // .app[1].target // .app[0]) | split("/")[-1]] |
+            if length > 0 then .[] else error("cask has no app artifact") end
+          ')"
+          while IFS= read -r bundle; do
+            app="/Applications/${bundle}"
+            test -d "$app"
+            test ! -L "$app"
+            codesign --verify --deep --strict "$app"
+            codesign -dv --verbose=2 "$app" 2>&1 \
+              | grep -q "Authority=Developer ID Application: PwrDrvr LLC"
+            spctl -a -vv "$app"
+          done <<<"$apps"
 
       - name: Uninstall
-        run: brew uninstall --cask pwrsnap
+        if: always() && steps.install.outcome == 'success'
+        run: brew uninstall --cask "pwrdrvr/tap/${CASK}"
