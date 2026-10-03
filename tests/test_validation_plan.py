@@ -1,9 +1,15 @@
 """All three apps share a guard bound to cask/release/code/native coverage."""
 
 import copy
+import contextlib
 import importlib.util
+import io
+import json
+import os
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("validation_plan", ROOT / "scripts/validation-plan.py")
@@ -84,3 +90,38 @@ class ValidationGuardTests(unittest.TestCase):
         def forbidden(*args):
             self.fail("Docs-only selection must not query release/cache APIs")
         self.assertEqual(validation.make_matrix([], forbidden, forbidden, "code", forbidden, self.refs), ({"include": []}, []))
+
+    def test_sync_cli_plans_candidate_and_separates_upgrade_coverage(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            root = Path(directory)
+            (root / "Casks").mkdir()
+            (root / "distribution/Casks").mkdir(parents=True)
+            cask = self.casks["pwrgit"] + 'url "https://github.com/pwrdrvr/PwrGit/releases/download/v#{version}/App-#{version}-universal.dmg"\n'
+            (root / "Casks/pwrgit.rb").write_text(cask)
+            (root / "distribution/Casks/pwrgit.rb").write_text(cask)
+            (root / "distribution/release.json").write_text(json.dumps(self.release))
+            def command(*args):
+                self.assertEqual(args[:2], ("gh", "api"))
+                if "actions/caches?" in " ".join(args):
+                    return ""
+                self.assertIn("releases/tags/v1.2.3", args[2])
+                return json.dumps(self.release)
+            original = Path.cwd()
+            try:
+                os.chdir(root)
+                with patch.object(validation, "command", side_effect=command), patch.object(validation, "validation_code", return_value="code"), \
+                        patch("sys.argv", ["validation-plan.py", "--pwrgit-sync", "distribution"]), \
+                        patch.dict(os.environ, {"GITHUB_OUTPUT": str(root / "output")}, clear=True), contextlib.redirect_stdout(io.StringIO()):
+                    validation.main()
+                matrix = json.loads((root / "output").read_text().removeprefix("matrix="))
+                self.assertEqual(len(matrix["include"]), 2)
+                self.assertTrue(all(row["key"].startswith("tap-sync-validation-v1-pwrgit-") for row in matrix["include"]))
+            finally:
+                os.chdir(original)
+
+    def test_force_validation_ignores_success_records(self):
+        self.warm()
+        matrix, reused = validation.make_matrix(self.tokens, self.casks.get, lambda *args: self.release,
+                                               "validator-1", lambda key: self.caches, self.refs, force=True)
+        self.assertEqual(len(matrix["include"]), 6)
+        self.assertEqual(reused, [])

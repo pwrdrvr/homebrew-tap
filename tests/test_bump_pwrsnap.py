@@ -31,7 +31,7 @@ class PwrSnapDeduplicationTests(unittest.TestCase):
         self.assertTrue(bump.candidate(self.plan["cask"], release)["changed"])
 
     def test_pending_candidate_requires_both_exact_cask_and_validation_record(self):
-        pending = bump.pending_matches(self.plan, [self.pr], lambda sha: self.plan["cask"])
+        pending = bump.pending_matches(self.plan, [self.pr], lambda sha: self.plan["cask"], lambda pr: ["Casks/pwrsnap.rb"])
         self.assertTrue(pending)
         plan = {**self.plan, "key": self.key, "pending": pending}
         self.assertTrue(bump.skip_validation(plan, self.key))
@@ -44,8 +44,9 @@ class PwrSnapDeduplicationTests(unittest.TestCase):
                        lambda pr: pr["base"].update(ref="other"), lambda pr: pr["head"].update(ref="other")]:
             pr = copy.deepcopy(self.pr)
             mutate(pr)
-            self.assertFalse(bump.pending_matches(self.plan, [pr], lambda sha: self.plan["cask"]))
-        self.assertFalse(bump.pending_matches(self.plan, [self.pr], lambda sha: self.current))
+            self.assertFalse(bump.pending_matches(self.plan, [pr], lambda sha: self.plan["cask"], lambda pr: ["Casks/pwrsnap.rb"]))
+        self.assertFalse(bump.pending_matches(self.plan, [self.pr], lambda sha: self.current, lambda pr: ["Casks/pwrsnap.rb"]))
+        self.assertFalse(bump.pending_matches(self.plan, [self.pr], lambda sha: self.plan["cask"], lambda pr: ["Casks/pwrsnap.rb", ".github/workflows/ci.yml"]))
 
     def test_release_identity_cask_and_validator_changes_invalidate_record(self):
         for field, value in [("id", 999), ("updated_at", "changed"), ("size", 5678), ("digest", "sha256:" + "c" * 64)]:

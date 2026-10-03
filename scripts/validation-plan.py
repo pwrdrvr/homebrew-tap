@@ -100,7 +100,7 @@ def main():
         prior_assets = release_identity(previous, release("pwrgit", previous))
         code = json.dumps(dict(code=code, previous_cask=previous, previous_assets=prior_assets), sort_keys=True)
         source = lambda token: (Path(args.pwrgit_sync) / "Casks/pwrgit.rb").read_text()
-        release = lambda *args: json.loads((Path(args.pwrgit_sync) / "release.json").read_text())
+        release = lambda *_unused: json.loads((Path(args.pwrgit_sync) / "release.json").read_text())
         namespace = "tap-sync-validation-v1"
     matrix, reused = make_matrix(selected, source, release, code, cache_lookup, refs,
                                  force=os.environ.get("FORCE_VALIDATION") == "true", namespace=namespace)

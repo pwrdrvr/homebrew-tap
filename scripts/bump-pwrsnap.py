@@ -57,13 +57,17 @@ def validation_key(plan, validator_hash):
     return "pwrsnap-validation-v1-macos-26-arm64-" + hashlib.sha256(content.encode()).hexdigest()
 
 
-def pending_matches(plan, pulls, read_cask):
+def pending_matches(plan, pulls, read_cask, read_files):
     branch = f"bump/pwrsnap-{plan['version']}"
     for pr in pulls:
         if (pr["state"] == "open" and pr["base"]["ref"] == "main" and
                 pr["head"]["ref"] == branch and
                 (pr["head"].get("repo") or {}).get("full_name") == "pwrdrvr/homebrew-tap"):
-            if read_cask(pr["head"]["sha"]) == plan["cask"]:
+            files = read_files(pr)
+            # An edited PR's scripts/workflows must not inherit a main-branch
+            # audit record merely because its cask still looks identical.
+            expected_files = all(path == "Casks/pwrsnap.rb" or path.endswith(".md") or path.startswith("docs/") for path in files)
+            if expected_files and read_cask(pr["head"]["sha"]) == plan["cask"]:
                 return True
     return False
 
@@ -103,7 +107,11 @@ def main():
             def read_cask(sha):
                 result = api(f"repos/pwrdrvr/homebrew-tap/contents/Casks/pwrsnap.rb?ref={sha}")
                 return base64.b64decode(result["content"]).decode()
-            plan["pending"] = pending_matches(plan, pulls, read_cask)
+            def read_files(pr):
+                files = api(f"repos/pwrdrvr/homebrew-tap/pulls/{pr['number']}/files?per_page=100")
+                # Large unexpected PRs are never the simple automated candidate.
+                return [f["filename"] for f in files] if len(files) < 100 else ["unexpected-large-pr"]
+            plan["pending"] = pending_matches(plan, pulls, read_cask, read_files)
             directory.mkdir(parents=True, exist_ok=True)
             (directory / "pwrsnap.rb").write_text(plan["cask"])
             (directory / "plan.json").write_text(json.dumps(plan))
