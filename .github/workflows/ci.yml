@@ -1,12 +1,12 @@
-# PR gate: the cask must lint, audit (URL + sha256 verified online), and
-# actually install + pass a signature check on a current macOS runner.
+# Unpublished versions must lint, audit, install and pass signature checks.
+# Published versions are immutable and never fetch installers again.
 name: CI
 
 on:
   workflow_dispatch:
     inputs:
       force-validation:
-        description: Run native validation even if this exact candidate already passed (installer bytes still cached)
+        description: Revalidate unpublished candidates even if they passed before (published versions always skip)
         type: boolean
         default: false
   pull_request:
@@ -47,7 +47,7 @@ jobs:
           selection="$(python3 scripts/select-casks.py --event "$EVENT" --base "$BASE")"
           echo "$selection" > "$RUNNER_TEMP/cask-selection.json"
           echo "$selection" >>"$GITHUB_STEP_SUMMARY"
-      - name: Reuse identical successful native validations for every app
+      - name: Skip published versions and reuse unpublished candidate validations
         id: validation
         env:
           GH_TOKEN: ${{ github.token }}

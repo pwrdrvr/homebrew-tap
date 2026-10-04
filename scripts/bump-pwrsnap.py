@@ -29,6 +29,11 @@ def candidate(current, release, requested=""):
         raise ValueError("Expected a stable release")
     if requested and requested.removeprefix("v") != latest:
         raise ValueError("Requested version does not match resolved release")
+    if latest == previous:
+        # Published versions are immutable. Metadata changes or missing caches
+        # must never turn the periodic version check into an installer fetch.
+        return dict(current=previous, latest=latest, version=previous, changed=False,
+                    reason="Version already published; assuming immutable installers")
     if not requested and new < old:
         return dict(current=previous, latest=latest, version=previous, changed=False,
                     reason="Holding newer cask while a maintenance release is Latest")

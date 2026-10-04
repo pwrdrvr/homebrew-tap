@@ -18,6 +18,25 @@ def command(*args):
     return subprocess.check_output(args, text=True).strip()
 
 
+def published_versions(tokens, reference="origin/main"):
+    # Only the trusted main line records publication. PR/sibling history does
+    # not qualify. Git history survives cache eviction and runner changes.
+    return {token: set(re.findall(r'^\+  version "([^"]+)"$', command(
+        "git", "log", "--first-parent", "--format=", "-p", reference,
+        "--", f"Casks/{token}.rb"), re.M)) for token in tokens}
+
+
+def unpublished_casks(tokens, source, published):
+    required, skipped = [], []
+    for token in tokens:
+        version = re.search(r'^  version "([^"]+)"$', source(token), re.M)[1]
+        if version in published.get(token, set()):
+            skipped.append(dict(cask=token, version=version))
+        else:
+            required.append(token)
+    return required, skipped
+
+
 def validation_key(token, cask, assets, code, runner, architecture, namespace="tap-validation-v1"):
     identity = dict(cask=cask, assets=assets, code=code, runner=runner, architecture=architecture)
     digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
@@ -100,6 +119,12 @@ def main():
     mode.add_argument("--pwrgit-sync", metavar="DIRECTORY")
     args = parser.parse_args()
     selected = ["pwrgit"] if args.pwrgit_sync else json.loads(Path(args.selection).read_text())["casks"]
+    source = lambda token: Path(f"Casks/{token}.rb").read_text()
+    published = []
+    if not args.pwrgit_sync:
+        selected, published = unpublished_casks(selected, source, published_versions(selected))
+    elif not json.loads((Path(args.pwrgit_sync) / "sync.json").read_text())["changed"]:
+        selected = []
     repo = os.environ.get("GITHUB_REPOSITORY", "pwrdrvr/homebrew-tap")
     refs = {"refs/heads/main", os.environ.get("GITHUB_REF", ""), "refs/heads/" + os.environ.get("BASE_REF", "main")}
     @lru_cache(maxsize=None)
@@ -115,10 +140,9 @@ def main():
                             "--jq", '.actions_caches[] | {key,ref} | @json')
             entries.extend(json.loads(line) for line in lines.splitlines())
         return entries
-    code = validation_code(sync=bool(args.pwrgit_sync))
-    source = lambda token: Path(f"Casks/{token}.rb").read_text()
+    code = validation_code(sync=bool(args.pwrgit_sync)) if selected else ""
     namespace = "tap-validation-v1"
-    if args.pwrgit_sync:
+    if args.pwrgit_sync and selected:
         previous = source("pwrgit")
         prior_assets = release_identity(previous, release("pwrgit", previous))
         code = json.dumps(dict(code=code, previous_cask=previous, previous_assets=prior_assets), sort_keys=True)
@@ -133,9 +157,10 @@ def main():
             if not args.pwrgit_sync:
                 installer = shared_pwrsnap_installer(matrix, source, release)
                 output.write(f"pwrsnap_installer={json.dumps(installer, separators=(',', ':'))}\n")
-    report = f"Native validations required: {len(matrix['include'])}; identical successful validations reused: {len(reused)}"
+    report = (f"Published immutable versions skipped: {len(published)}; "
+              f"native validations required: {len(matrix['include'])}; identical successful validations reused: {len(reused)}")
     print(report)
-    print(json.dumps(dict(matrix=matrix, reused=reused)))
+    print(json.dumps(dict(matrix=matrix, reused=reused, published=published)))
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
             summary.write(report + "\n")

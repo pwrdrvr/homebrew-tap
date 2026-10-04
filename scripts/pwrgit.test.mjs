@@ -32,14 +32,16 @@ test("downloads both architectures and skips unchanged versions", async () => {
   const unchanged = await prepareCask(plan.cask, release(), async () => { throw new Error("must not download"); });
   assert.equal(unchanged.changed, false);
 });
-test("planning performs no downloads and replaced same-version bytes require validation", async () => {
+test("planning treats published versions as immutable without inspecting assets or downloading", async () => {
   assert.equal(resolveCask(current, release()).changed, true);
   const plan = await prepareCask(current, release(), fetchAsset);
   assert.equal(resolveCask(plan.cask, release()).changed, false);
   const replaced = release();
   replaced.assets[0].digest = `sha256:${"f".repeat(64)}`;
-  assert.equal(resolveCask(plan.cask, replaced).changed, true);
-  await assert.rejects(prepareCask(plan.cask, replaced, fetchAsset), /digest\/size mismatch/);
+  assert.equal(resolveCask(plan.cask, replaced).changed, false);
+  const forbidden = async () => { throw new Error("published version must not download"); };
+  assert.equal((await prepareCask(plan.cask, replaced, forbidden)).changed, false);
+  assert.equal((await prepareCask(plan.cask, { tag_name: "v0.29.0" }, forbidden)).changed, false);
 });
 test("publishes only the validated cask with a compare-and-swap and reads it back", async () => {
   const plan = await prepareCask(current, release(), fetchAsset);
