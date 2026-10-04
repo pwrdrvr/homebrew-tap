@@ -24,11 +24,13 @@ class PwrSnapDeduplicationTests(unittest.TestCase):
         self.pr = dict(state="open", base=dict(ref="main"), head=dict(ref="bump/pwrsnap-1.1.14", sha="candidate-head",
                        repo=dict(full_name="pwrdrvr/homebrew-tap")))
 
-    def test_current_target_is_noop_and_same_version_changed_bytes_are_not(self):
+    def test_published_version_is_noop_even_with_changed_or_missing_asset_metadata(self):
         self.assertFalse(bump.candidate(self.plan["cask"], self.release)["changed"])
         release = copy.deepcopy(self.release)
         release["assets"][0]["digest"] = "sha256:" + "c" * 64
-        self.assertTrue(bump.candidate(self.plan["cask"], release)["changed"])
+        self.assertFalse(bump.candidate(self.plan["cask"], release)["changed"])
+        # Only the version tag is needed once it has been published.
+        self.assertFalse(bump.candidate(self.plan["cask"], dict(tag_name="v1.1.14"))["changed"])
 
     def test_pending_candidate_requires_both_exact_cask_and_validation_record(self):
         pending = bump.pending_matches(self.plan, [self.pr], lambda sha: self.plan["cask"], lambda pr: ["Casks/pwrsnap.rb"])

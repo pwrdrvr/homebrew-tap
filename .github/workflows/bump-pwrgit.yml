@@ -74,13 +74,13 @@ jobs:
         run: node scripts/bump-pwrgit.mjs distribution
       - name: Reuse an identical successful native upgrade validation
         id: validation
-        if: steps.prepare.outputs.changed == 'true' || github.event_name == 'pull_request'
+        if: steps.prepare.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.DISTRIBUTION_READ_TOKEN || github.token }}
           BASE_REF: ${{ github.event.pull_request.base.ref || 'main' }}
         run: python3 scripts/validation-plan.py --pwrgit-sync distribution
       - uses: actions/upload-artifact@v4
-        if: steps.prepare.outputs.changed == 'true' || github.event_name == 'pull_request'
+        if: steps.prepare.outputs.changed == 'true'
         with:
           name: pwrgit-candidate
           path: distribution

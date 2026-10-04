@@ -42,12 +42,12 @@ export function resolveCask(current, release) {
   const version = stableVersion(release);
   const previous = caskVersion(current);
   if (compare(previous, version) > 0) throw new Error("Refusing to downgrade the PwrGit cask");
-  const assets = assetsFor(release);
   const baseSha = createHash("sha1").update(`blob ${Buffer.byteLength(current)}\0`).update(current).digest("hex");
-  const checksums = current.match(/^  sha256 arm:   "([a-f0-9]{64})",\n         intel: "([a-f0-9]{64})"$/m);
-  // A replaced release asset must not hide behind the same version's no-op.
-  const sameBytes = checksums && assets.every((asset, index) => asset.digest === `sha256:${checksums[index + 1]}`);
-  return { version, previous, baseSha, assets, changed: previous !== version || !sameBytes, cask: current };
+  // A published version is immutable; do not inspect assets or fetch bytes
+  // again because release metadata or runner caches have changed.
+  if (previous === version) return { version, previous, baseSha, assets: [], changed: false, cask: current };
+  const assets = assetsFor(release);
+  return { version, previous, baseSha, assets, changed: true, cask: current };
 }
 export async function prepareCask(current, release, fetchAsset = fetch) {
   const plan = resolveCask(current, release);
