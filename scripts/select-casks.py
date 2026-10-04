@@ -40,14 +40,21 @@ def select_casks(event, base=None):
         for path in git_paths("ls-tree", "-r", "--name-only", "-z", "HEAD", "--", "Casks")
         if (token := cask_token(path))
     )
-    if event != "pull_request":
+    if event == "workflow_dispatch":
         return {"casks": present, "reason": f"{event}: all present casks"}
-    if not base:
-        raise ValueError("pull_request selection requires a base commit")
+    if not base or re.fullmatch(r"0+", base):
+        # A newly-created main has no previous commit. Fail closed for missing
+        # event data; only GitHub's explicit zero SHA means the whole tree is new.
+        if event == "push" and base and re.fullmatch(r"0+", base):
+            return {"casks": present, "reason": "push: new branch"}
+        raise ValueError(f"{event} selection requires a base commit")
 
     # Three-dot diff ignores changes made only on the base branch. Disable
     # rename detection so a renamed cask is selected under its new token.
-    changed = git_paths("diff", "--name-only", "--no-renames", "-z", f"{base}...HEAD")
+    # Pushes use the exact before/after range, including multi-commit pushes
+    # and force pushes. PRs compare to the merge base instead.
+    revision = f"{base}...HEAD" if event == "pull_request" else f"{base}..HEAD"
+    changed = git_paths("diff", "--name-only", "--no-renames", "-z", revision)
     selected = set()
     for path in changed:
         token = cask_token(path)

@@ -4,7 +4,9 @@ candidate=${1:?candidate cask path required}
 previous=${2:-}
 token=pwrdrvr/tap/pwrgit
 mkdir -p "$(brew --repository)/Library/Taps/pwrdrvr"
-ln -s "$PWD" "$(brew --repository)/Library/Taps/pwrdrvr/homebrew-tap"
+if [ ! -L "$(brew --repository)/Library/Taps/pwrdrvr/homebrew-tap" ]; then
+  ln -s "$PWD" "$(brew --repository)/Library/Taps/pwrdrvr/homebrew-tap"
+fi
 if brew trust --help >/dev/null 2>&1; then brew trust --cask "$token"; fi
 
 # On updates, exercise replacement from the currently published version.
