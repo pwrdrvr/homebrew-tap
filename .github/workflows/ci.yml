@@ -36,6 +36,14 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           set -euo pipefail
+          # A full checkout contains reachable history, but a force push can
+          # leave the previous main tip outside every advertised branch/tag.
+          # Fetch only that commit/tree when missing; two-dot selection needs
+          # no ancestors. Existing/new-branch/PR/manual runs need no extra fetch.
+          if [[ "$EVENT" == push && "$BASE" =~ ^[0-9a-f]{40}$ && ! "$BASE" =~ ^0+$ ]] \
+            && ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            git fetch --no-tags --no-recurse-submodules --depth=1 origin "$BASE"
+          fi
           selection="$(python3 scripts/select-casks.py --event "$EVENT" --base "$BASE")"
           echo "$selection" > "$RUNNER_TEMP/cask-selection.json"
           echo "$selection" >>"$GITHUB_STEP_SUMMARY"
