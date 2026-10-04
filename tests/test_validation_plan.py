@@ -91,6 +91,48 @@ class ValidationGuardTests(unittest.TestCase):
             self.fail("Docs-only selection must not query release/cache APIs")
         self.assertEqual(validation.make_matrix([], forbidden, forbidden, "code", forbidden, self.refs), ({"include": []}, []))
 
+    def test_pwrsnap_cli_warms_one_universal_installer_for_both_native_jobs(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            root = Path(directory)
+            (root / "Casks").mkdir()
+            sha = "a" * 64
+            url = "https://github.com/pwrdrvr/PwrSnap/releases/download/v1.2.3/PwrSnap-1.2.3-universal.dmg"
+            cask = self.casks["pwrsnap"] + f'  sha256 "{sha}"\n  url "{url.replace("1.2.3", "#{version}")}"\n'
+            (root / "Casks/pwrsnap.rb").write_text(cask)
+            (root / "selection.json").write_text(json.dumps(dict(casks=["pwrsnap"])))
+            release = copy.deepcopy(self.release)
+            release["assets"][0].update(name="PwrSnap-1.2.3-universal.dmg", browser_download_url=url)
+            api_calls = []
+            def command(*args):
+                api_calls.append(args)
+                return "" if "actions/caches?" in " ".join(args) else json.dumps(release)
+            original = Path.cwd()
+            try:
+                os.chdir(root)
+                with patch.object(validation, "command", side_effect=command), patch.object(validation, "validation_code", return_value="code"), \
+                        patch("sys.argv", ["validation-plan.py", "--selection", "selection.json"]), \
+                        patch.dict(os.environ, {"GITHUB_OUTPUT": str(root / "output")}, clear=True), contextlib.redirect_stdout(io.StringIO()):
+                    validation.main()
+                output = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
+                self.assertEqual({row["os"] for row in json.loads(output["matrix"])["include"]},
+                                 {"macos-26", "macos-15-intel"})
+                self.assertEqual(json.loads(output["pwrsnap_installer"]),
+                                 dict(url=url, sha256=sha, size=123, version="1.2.3", architecture="universal"))
+                self.assertEqual(sum("releases/tags/" in args[2] for args in api_calls), 1)
+                # Fully reused validations must not touch installers, nor should
+                # a docs-only/PwrGit-only selection prefetch a PwrSnap release.
+                forbidden = lambda *args: self.fail("no required PwrSnap validation")
+                for matrix in [{"include": []}, {"include": [{"cask": "pwrgit"}]}]:
+                    self.assertEqual(validation.shared_pwrsnap_installer(matrix, forbidden, forbidden), {})
+                with self.assertRaisesRegex(ValueError, "checksum differs"):
+                    bad = copy.deepcopy(release)
+                    bad["assets"][0]["digest"] = "sha256:" + "b" * 64
+                    validation.shared_pwrsnap_installer(json.loads(output["matrix"]), lambda _: cask, lambda *_: bad)
+                changed = cask.replace("PwrSnap-#{version}-universal.dmg", "custom-universal.dmg")
+                self.assertEqual(validation.shared_pwrsnap_installer(json.loads(output["matrix"]), lambda _: changed, forbidden), {})
+            finally:
+                os.chdir(original)
+
     def test_sync_cli_plans_candidate_and_separates_upgrade_coverage(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as directory:
             root = Path(directory)

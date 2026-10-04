@@ -7,6 +7,7 @@ import json
 import os
 import re
 import subprocess
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -57,6 +58,27 @@ def make_matrix(casks, source, release, code, cache_lookup, allowed_refs, force=
     return dict(include=matrix), reused
 
 
+def shared_pwrsnap_installer(matrix, source, release):
+    # Both native profiles use PwrSnap's universal DMG. Warm their shared
+    # cache before the matrix starts, including on a cold main/PR ref.
+    if not any(row["cask"] == "pwrsnap" for row in matrix["include"]):
+        return {}
+    cask = source("pwrsnap")
+    version = re.search(r'^  version "([^"]+)"$', cask, re.M)[1]
+    url_template = "https://github.com/pwrdrvr/PwrSnap/releases/download/v#{version}/PwrSnap-#{version}-universal.dmg"
+    # A changed downloader layout is resolved natively by Homebrew instead.
+    if f'  url "{url_template}"' not in cask.splitlines():
+        return {}
+    url = url_template.replace("#{version}", version)
+    assets = release_identity(cask, release("pwrsnap", cask))
+    matches = [asset for asset in assets if asset["browser_download_url"] == url]
+    sha = re.search(r'^  sha256 "([a-f0-9]{64})"$', cask, re.M)
+    if len(matches) != 1 or not sha or matches[0]["digest"] != f"sha256:{sha[1]}":
+        raise ValueError("PwrSnap cask checksum differs from the live release digest")
+    return dict(url=url, sha256=sha[1], size=matches[0]["size"],
+                version=version, architecture="universal")
+
+
 def validation_code(sync=False):
     # Only tracked sources: running Python tests must not fingerprint pycache or
     # generated plans. Documentation and unrelated app bump code need no install.
@@ -80,6 +102,7 @@ def main():
     selected = ["pwrgit"] if args.pwrgit_sync else json.loads(Path(args.selection).read_text())["casks"]
     repo = os.environ.get("GITHUB_REPOSITORY", "pwrdrvr/homebrew-tap")
     refs = {"refs/heads/main", os.environ.get("GITHUB_REF", ""), "refs/heads/" + os.environ.get("BASE_REF", "main")}
+    @lru_cache(maxsize=None)
     def release(token, cask):
         owner_repo = re.search(r'url "https://github.com/(pwrdrvr/[^/]+)/releases/download/', cask)[1]
         tag = re.search(r'^  version "([^"]+)"$', cask, re.M)[1]
@@ -107,6 +130,9 @@ def main():
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
             output.write(f"matrix={json.dumps(matrix, separators=(',', ':'))}\n")
+            if not args.pwrgit_sync:
+                installer = shared_pwrsnap_installer(matrix, source, release)
+                output.write(f"pwrsnap_installer={json.dumps(installer, separators=(',', ':'))}\n")
     report = f"Native validations required: {len(matrix['include'])}; identical successful validations reused: {len(reused)}"
     print(report)
     print(json.dumps(dict(matrix=matrix, reused=reused)))

@@ -54,6 +54,17 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref || 'main' }}
           FORCE_VALIDATION: ${{ inputs.force-validation || false }}
         run: python3 scripts/validation-plan.py --selection "$RUNNER_TEMP/cask-selection.json"
+      # The universal PwrSnap DMG is identical on both Mac profiles. Cache it
+      # once in this ref before parallel jobs can race on the same cold key.
+      - name: Cache shared PwrSnap installer before native validation
+        if: fromJSON(steps.validation.outputs.pwrsnap_installer).url != null
+        uses: ./.github/actions/cache-installer
+        with:
+          url: ${{ fromJSON(steps.validation.outputs.pwrsnap_installer).url }}
+          sha256: ${{ fromJSON(steps.validation.outputs.pwrsnap_installer).sha256 }}
+          size: ${{ fromJSON(steps.validation.outputs.pwrsnap_installer).size }}
+          version: ${{ fromJSON(steps.validation.outputs.pwrsnap_installer).version }}
+          architecture: universal
 
   cask:
     needs: select
