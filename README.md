@@ -73,7 +73,7 @@ without losing your place while agents work alongside you.
 brew install --cask pwrdrvr/tap/pwrgit
 ```
 
-macOS 12 Monterey or newer · Apple Silicon + Intel
+macOS 13 Ventura or newer · Apple Silicon + Intel
 
 [Explore PwrGit](https://pwrgit.com) · [Documentation](https://docs.pwrgit.com) · [Source code](https://github.com/pwrdrvr/PwrGit)
 
