@@ -22,7 +22,9 @@ member's SHA-256 and size against GitHub release metadata. Existing signed
 macOS/Windows artifacts retain for 90 days in the product workflows. The tap's
 installer cache stores exact verified bytes; restored bytes are checked again.
 A Homebrew curl guard prohibits PwrDrvr release-asset requests, so a missing
-cache step cannot silently increase release download statistics.
+cache step cannot silently increase release download statistics. The online
+audit excludes only the binary URL reachability probe (`url_https_availability`);
+release metadata supplies URL identity and published-asset presence instead.
 
 Missing/expired artifacts, corrupt bytes, moved tags, changed release metadata,
 or concurrent cask edits stop publication and file one tracking issue per outage.
