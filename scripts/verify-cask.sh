@@ -19,7 +19,8 @@ appname=$(brew info --json=v2 --cask "$token" | python3 -c 'import json,sys; c=j
 test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "/Applications/$appname/Contents/Info.plist")" = "$previous"
 cp "$candidate" "Casks/$cask.rb"
 brew style "Casks/$cask.rb"
-brew audit --cask --online "$token"
+# Release metadata verifies the URL; probing it would bypass artifact-only CI.
+brew audit --cask --online --except=url_https_availability "$token"
 brew upgrade --cask --greedy "$token"
 target=$(sed -nE 's/^  version "([0-9]+\.[0-9]+\.[0-9]+)"/\1/p' "$candidate")
 case "$cask" in

@@ -4,68 +4,45 @@ The tap publishes stable macOS releases of [PwrAgent](https://pwragent.ai),
 [PwrSnap](https://pwrsnap.com), and [PwrGit](https://pwrgit.com). Alpha and beta builds do not update these
 casks.
 
-## PwrAgent releases
+## Stable release publication
 
-[`Casks/pwragent.rb`](../Casks/pwragent.rb) selects the signed/notarized arm64 DMG on Apple Silicon
-and universal DMG on Intel from promoted stable
-[GitHub releases](https://github.com/pwrdrvr/PwrAgent/releases/latest).
+The tap owns automatic publication for all three apps. `bump-pwrgit.yml`,
+`bump.yml` (PwrSnap), and `bump-pwragent.yml` each accept a manual version input
+and check Stable Latest every 15 minutes. They call `sync.yml`, which validates
+both native Mac profiles and commits the validated cask directly to `main`.
+Routine releases require no bump PR or merge approval. Product workflows can
+immediately dispatch using `HOMEBREW_TAP_DISPATCH_TOKEN` (tap-only Actions write);
+without it, they await the independent tap schedule. Public-read credentials and
+Winget submission credentials remain separate.
 
-The [PwrAgent distribution workflow](https://github.com/pwrdrvr/PwrAgent/actions/workflows/package-manager-distribution.yml)
-prepares update PRs after stable promotion and daily reconciliation, validates
-both macOS architectures and fresh installs/upgrades, and leaves merging to
-maintainers. For the release procedure and credential setup, see
-[the PwrAgent distribution runbook](https://github.com/pwrdrvr/PwrAgent/blob/main/docs/package-manager-distribution.md).
+Installer acquisition uses retained **Actions build artifacts**, never published
+release-download URLs. The resolver requires a successful `release.yml` run for
+the exact stable tag commit, rejects PR/fork/preview/failed runs, and verifies each
+member's SHA-256 and size against GitHub release metadata. Existing signed
+macOS/Windows artifacts retain for 90 days in the product workflows. The tap's
+installer cache stores exact verified bytes; restored bytes are checked again.
+A Homebrew curl guard prohibits PwrDrvr release-asset requests, so a missing
+cache step cannot silently increase release download statistics.
 
-## PwrSnap releases
+Missing/expired artifacts, corrupt bytes, moved tags, changed release metadata,
+or concurrent cask edits stop publication and file one tracking issue per outage.
+Restore the original build artifacts or repair the failed step, then dispatch the
+app's tap workflow on `main`. Never rebuild a published installer or substitute
+release downloads to make validation pass. Already published versions are
+immutable no-ops even when caches expire or validation code changes.
 
-- [`Casks/pwrsnap.rb`](../Casks/pwrsnap.rb) pins a `version` + `sha256` of
-  `PwrSnap-<version>-universal.dmg`.
-- [`.github/workflows/bump.yml`](../.github/workflows/bump.yml) checks
-  `pwrdrvr/PwrSnap`'s latest stable release every six hours (or on
-  demand with a version input), re-hashes the DMG, runs `brew style` +
-  `brew audit --cask --online`, and opens a PR.
-- [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) checks cask style,
-  online audit, installation, Developer ID signature, Gatekeeper, and
-  uninstall on Apple Silicon and Intel macOS runners.
-- To bump by hand, run `scripts/bump-cask.sh <version>` from the repository root.
+The updater reads the tagged release's minimum macOS requirement. Native checks
+cover the prior published installation, upgrade, fresh candidate installation,
+app identity/version/minimum OS, architecture, Developer ID, Gatekeeper, stapled
+notarization, and uninstall. PwrGit/PwrAgent use arm64 on Apple Silicon and
+universal on Intel; PwrSnap preserves its universal cask. Uninstall preserves
+user data, and PwrSnap's existing explicit zap list remains unchanged.
 
-Only the **Stable** train is published here (`/releases/latest`). Alpha
-and beta builds are GitHub Pre-releases; opt in from inside the app under
-Settings → General → Update channel.
-
-## PwrGit releases
-
-[`Casks/pwrgit.rb`](../Casks/pwrgit.rb) uses PwrGit's promoted Stable Latest
-release, with native arm64 on Apple Silicon and the universal DMG on Intel.
-
-The tap owns publication. `bump-pwrgit.yml` accepts an immediate dispatch after
-PwrGit is promoted to Stable Latest and checks Latest every 15 minutes as a
-fallback. It downloads both versioned DMGs and checks their sizes and SHA-256
-against GitHub, then audits, installs/upgrades, verifies bundle identity,
-architectures, Developer ID/Gatekeeper, and uninstalls on Intel and Apple Silicon.
-Only after both jobs pass does its own `GITHUB_TOKEN` commit the single validated
-cask to `main`. Routine releases require no bump PR, workflow approval or merge.
-The publisher rechecks Latest, artifact metadata and the previous cask SHA before
-committing; concurrent changes fail rather than overwrite another update.
-
-PwrGit's release workflow uses `HOMEBREW_TAP_DISPATCH_TOKEN` solely to dispatch
-this tap workflow: a fine-grained PAT owned by `pwrdrvr`, selected repository
-`homebrew-tap`, Actions write permission. The existing public-read-only
-`DISTRIBUTION_READ_TOKEN` is used for public reads and cannot dispatch workflows.
-No cross-repository contents-write credential is needed. The release skill can
-also dispatch using the maintainer's existing GitHub CLI authentication.
-
-This registration PR must be merged once before automatic publication is live.
-Scheduling is best effort on GitHub Actions; immediate dispatch is the normal
-promotion path. Failed runs file one tracking issue per outage with a direct run
-link. The product release workflow waits for the cask to appear on tap `main`
-and reports a direct run link on failure. Check the default branch and refresh
-Homebrew before declaring client discovery/install verified.
-
-After merge run `brew update`, inspect `brew info --cask pwrdrvr/tap/pwrgit`
-and test installation before describing the version as live. The cask retains
-all user data on uninstall and deliberately has no `zap` stanza. Publication failures
-open one tracking issue per outage with the failed run and a recovery action.
+Publication rechecks Stable Latest, installer identity, the tag commit and the
+previous cask blob before writing. After publication, refresh Homebrew and verify
+client discovery with `brew update` and `brew info --cask pwrdrvr/tap/<app>`.
+Do not replace an operator's running application for a smoke test; native install
+and upgrade validation runs on isolated hosted CI runners.
 
 ## CI scope
 

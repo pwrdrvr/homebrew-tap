@@ -125,7 +125,7 @@ jobs:
           token: pwrdrvr/tap/${{ matrix.cask }}
 
       - name: Audit the cask against its release
-        run: brew audit --cask --online "pwrdrvr/tap/${CASK}"
+        run: brew audit --cask --online --except=url_https_availability "pwrdrvr/tap/${CASK}"
 
       - name: Install
         id: install
