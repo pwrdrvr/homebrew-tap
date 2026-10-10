@@ -1,6 +1,6 @@
 cask "pwrsnap" do
-  version "1.1.14"
-  sha256 "c6b8cc4da357d0cce8bd083269d7e980fd32f8c991068e2783f513d65ff021ec"
+  version "1.1.19"
+  sha256 "4cf0d2f8ef15de8258152850129809fe48b893671f0bb9b5d7e2a2b07eec7750"
 
   # No `verified:` — Homebrew deprecated the parameter (it is now an explicit
   # no-op in `Cask::DSL#url`, and `audit_unnecessary_verified` fails the audit
