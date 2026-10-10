@@ -1,183 +1,33 @@
-# Resolve on Linux; audit only a new/unvalidated candidate. Keep successful
-# candidate validation on main so the six-hour schedule can reuse it while its
-# exact PR is pending. Installer caches remain separate from validation records.
-name: Bump pwrsnap cask
-
+name: Publish PwrSnap Stable Latest
+run-name: PwrSnap Homebrew sync ${{ inputs.version || 'Stable Latest' }}
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "PwrSnap version to pin (no leading v). Empty = latest stable."
+        description: Promoted stable version without v (empty resolves Latest)
         required: false
-        default: ""
+        type: string
   schedule:
-    - cron: "17 */6 * * *"
-
+    - cron: "9,24,39,54 * * * *"
+  pull_request:
+    paths:
+      - Casks/pwrsnap.rb
+      - scripts/**
+      - tests/**
+      - .github/actions/**
+      - .github/workflows/sync.yml
+      - .github/workflows/bump.yml
 permissions:
   contents: write
-  pull-requests: write
-
+  actions: read
+  issues: write
 concurrency:
-  group: pwrsnap-bump-${{ github.ref }}
+  group: pwrsnap-sync-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
   cancel-in-progress: false
-
 jobs:
-  resolve:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-    outputs:
-      version: ${{ steps.resolve.outputs.version }}
-      current: ${{ steps.resolve.outputs.current }}
-      latest: ${{ steps.resolve.outputs.latest }}
-      required: ${{ steps.decide.outputs.required }}
-      key: ${{ steps.resolve.outputs.key }}
-    steps:
-      - uses: actions/checkout@v5
-      - name: Test selection, caching and candidate deduplication
-        run: python3 -m unittest discover -s tests -v
-      - id: resolve
-        name: Resolve release metadata and pending candidate without installers
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REQUESTED: ${{ inputs.version }}
-          VALIDATOR_HASH: ${{ hashFiles('.github/workflows/*.yml', '.github/actions/**/action.yml', 'scripts/*.py', 'scripts/*.sh', 'scripts/*.mjs', 'tests/*.py') }}
-        run: python3 scripts/bump-pwrsnap.py plan
-      - uses: actions/cache/restore@v4
-        if: steps.resolve.outputs.changed == 'true'
-        with:
-          path: .local/validation/pwrsnap
-          key: ${{ steps.resolve.outputs.key }}
-      - id: decide
-        if: steps.resolve.outputs.changed == 'true'
-        run: python3 scripts/bump-pwrsnap.py decide
-      - uses: actions/upload-artifact@v4
-        if: steps.decide.outputs.required == 'true'
-        with:
-          name: pwrsnap-candidate
-          path: .local/pwrsnap-candidate
-          include-hidden-files: true
-          retention-days: 3
-
-  bump:
-    needs: resolve
-    if: needs.resolve.outputs.required == 'true'
-    runs-on: macos-26
-    env:
-      GH_TOKEN: ${{ github.token }}
-      HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
-        with:
-          name: pwrsnap-candidate
-          path: .local/pwrsnap-candidate
-      - name: Apply candidate and link the checkout as a tap
-        run: |
-          set -euo pipefail
-          cp .local/pwrsnap-candidate/pwrsnap.rb Casks/pwrsnap.rb
-          taps="$(brew --repository)/Library/Taps/pwrdrvr"
-          mkdir -p "$taps"
-          ln -s "$GITHUB_WORKSPACE" "$taps/homebrew-tap"
-          if brew trust --help >/dev/null 2>&1; then
-            brew trust --cask pwrdrvr/tap/pwrsnap
-          fi
-      - name: Restore verified universal installer into Homebrew's cache
-        uses: ./.github/actions/cache-installer
-        with:
-          token: pwrdrvr/tap/pwrsnap
-      - name: Lint and audit the candidate
-        run: |
-          brew style Casks/pwrsnap.rb
-          brew audit --cask --online pwrdrvr/tap/pwrsnap
-      - uses: peter-evans/create-pull-request@v7
-        with:
-          branch: bump/pwrsnap-${{ needs.resolve.outputs.version }}
-          title: "pwrsnap ${{ needs.resolve.outputs.version }}"
-          commit-message: "pwrsnap ${{ needs.resolve.outputs.version }}"
-          body: |
-            I updated PwrSnap to ${{ needs.resolve.outputs.version }}
-            (https://github.com/pwrdrvr/PwrSnap/releases/tag/v${{ needs.resolve.outputs.version }}).
-
-            I verified the DMG against the GitHub release SHA-256 and size, and
-            ran `brew style` and `brew audit --cask --online` on macos-26.
-          delete-branch: true
-      - name: Record successful validation and publication
-        run: python3 scripts/bump-pwrsnap.py mark
-      # Only trusted default-branch runs can provide a future cron's validation.
-      # A PR/other branch cannot promote its validation into main's cache scope.
-      - uses: actions/cache/save@v4
-        if: github.ref == 'refs/heads/main'
-        with:
-          path: .local/validation/pwrsnap
-          key: ${{ needs.resolve.outputs.key }}
-
-  # A scheduled job that fails silently is the same as no job at all. This
-  # workflow failed 15 consecutive runs on a Homebrew deprecation while the
-  # cask sat four releases behind (1.0.3 vs 1.1.2) and nobody noticed -- the
-  # 85 runs before that were all no-ops, so the bump path had never actually
-  # run since it was merged. Email on a failed cron was evidently not enough,
-  # so a failure now files an issue that stays open until someone fixes it.
-  notify:
-    needs: [resolve, bump]
-    if: failure()
-    runs-on: ubuntu-latest
-    permissions:
-      issues: write
-    steps:
-      - name: File a tracking issue
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          RESOLVED: ${{ needs.resolve.outputs.latest }}
-          CURRENT: ${{ needs.resolve.outputs.current }}
-        run: |
-          set -euo pipefail
-
-          gh label create bump-failure \
-            --repo "${GITHUB_REPOSITORY}" \
-            --color b60205 \
-            --description "The scheduled cask bump is failing" \
-            --force
-
-          # One issue per outage, not one per run -- this cron fires every six hours,
-          # so commenting on each failure would bury the signal it exists to raise.
-          existing="$(gh issue list \
-            --repo "${GITHUB_REPOSITORY}" \
-            --label bump-failure \
-            --state open \
-            --limit 1 \
-            --json number \
-            --jq '.[0].number // empty')"
-          if [ -n "${existing}" ]; then
-            echo "Issue #${existing} already tracks this outage; not filing another."
-            exit 0
-          fi
-
-          # `resolve` may itself be what failed, so neither version is guaranteed set.
-          body="${RUNNER_TEMP}/bump-failure.md"
-          {
-            echo "The scheduled \`bump.yml\` run failed, so \`Casks/pwrsnap.rb\` is **not**"
-            echo "tracking the latest stable PwrSnap release."
-            echo
-            echo "| | |"
-            echo "|---|---|"
-            echo "| Cask is pinned at | \`${CURRENT:-unknown}\` |"
-            echo "| Latest stable resolved to | \`${RESOLVED:-unresolved}\` |"
-            echo "| Failed run | ${RUN_URL} |"
-            echo
-            echo "Until this is fixed, \`brew install --cask pwrdrvr/tap/pwrsnap\` and"
-            echo "\`brew upgrade\` keep serving the pinned version. Users who already have"
-            echo "the app still get updates in-app (the cask is \`auto_updates true\`);"
-            echo "new installs do not."
-            echo
-            echo "Filed once per outage. Close it once the bump PR merges -- the next"
-            echo "failure opens a fresh one."
-          } >"${body}"
-
-          gh issue create \
-            --repo "${GITHUB_REPOSITORY}" \
-            --title "Cask bump is failing -- pwrsnap pinned at ${CURRENT:-unknown}" \
-            --label bump-failure \
-            --body-file "${body}"
+  sync:
+    uses: ./.github/workflows/sync.yml
+    with:
+      cask: pwrsnap
+      version: ${{ inputs.version || '' }}
+    secrets: inherit

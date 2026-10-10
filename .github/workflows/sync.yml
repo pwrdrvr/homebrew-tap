@@ -1,0 +1,164 @@
+name: Validate and publish stable cask
+on:
+  workflow_call:
+    inputs:
+      cask:
+        required: true
+        type: string
+      version:
+        default: ''
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      changed: ${{ steps.plan.outputs.changed }}
+      version: ${{ steps.plan.outputs.version }}
+      previous: ${{ steps.plan.outputs.previous }}
+      matrix: ${{ steps.validation.outputs.matrix || '{"include":[]}' }}
+    env:
+      GH_TOKEN: ${{ secrets.DISTRIBUTION_READ_TOKEN || github.token }}
+      CASK: ${{ inputs.cask }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Test artifact acquisition and publication guards
+        run: python3 -m unittest discover -s tests -v
+      - name: Resolve Stable Latest using metadata only
+        id: plan
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: python3 scripts/sync-cask.py plan "$CASK" distribution
+      - name: Restore verified ARM build artifact
+        if: steps.plan.outputs.changed == 'true' && steps.plan.outputs.arm64_url != ''
+        uses: ./.github/actions/cache-installer
+        with:
+          url: ${{ steps.plan.outputs.arm64_url }}
+          sha256: ${{ steps.plan.outputs.arm64_sha256 }}
+          size: ${{ steps.plan.outputs.arm64_size }}
+          version: ${{ steps.plan.outputs.version }}
+          architecture: arm64
+      - name: Restore verified universal build artifact
+        if: steps.plan.outputs.changed == 'true'
+        uses: ./.github/actions/cache-installer
+        with:
+          url: ${{ steps.plan.outputs.universal_url }}
+          sha256: ${{ steps.plan.outputs.universal_sha256 }}
+          size: ${{ steps.plan.outputs.universal_size }}
+          version: ${{ steps.plan.outputs.version }}
+          architecture: universal
+      - name: Reuse successful native validation
+        id: validation
+        if: steps.plan.outputs.changed == 'true'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref || 'main' }}
+        run: python3 scripts/validation-plan.py --sync "$CASK" distribution
+      - uses: actions/upload-artifact@v4
+        if: steps.plan.outputs.changed == 'true'
+        with:
+          name: ${{ inputs.cask }}-candidate
+          path: distribution
+          retention-days: 3
+  validate:
+    needs: prepare
+    if: fromJSON(needs.prepare.outputs.matrix).include[0] != null
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ secrets.DISTRIBUTION_READ_TOKEN || github.token }}
+      HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.DISTRIBUTION_READ_TOKEN || github.token }}
+      HOMEBREW_CURL_PATH: ${{ github.workspace }}/scripts/ci-curl.py
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_INSTALL_CLEANUP: '1'
+      CASK: ${{ inputs.cask }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.cask }}-candidate
+          path: distribution
+      - name: Link tap and preserve published cask
+        run: |
+          mkdir -p "$(brew --repository)/Library/Taps/pwrdrvr"
+          ln -s "$PWD" "$(brew --repository)/Library/Taps/pwrdrvr/homebrew-tap"
+          cp "Casks/$CASK.rb" "$RUNNER_TEMP/published.rb"
+      - name: Restore previous build artifact for upgrade test
+        uses: ./.github/actions/cache-installer
+        with:
+          token: pwrdrvr/tap/${{ inputs.cask }}
+      - name: Select candidate for native cache resolution
+        run: cp "distribution/Casks/$CASK.rb" "Casks/$CASK.rb"
+      - name: Restore candidate build artifact into Homebrew cache
+        uses: ./.github/actions/cache-installer
+        with:
+          token: pwrdrvr/tap/${{ inputs.cask }}
+      - name: Restore published cask for upgrade coverage
+        run: cp "$RUNNER_TEMP/published.rb" "Casks/$CASK.rb"
+      - name: Test install, upgrade, identity, signatures and uninstall
+        env:
+          PREVIOUS: ${{ needs.prepare.outputs.previous }}
+        run: |
+          export MINIMUM_OS="$(jq -r .minimum_os distribution/sync.json)"
+          bash scripts/verify-cask.sh "$CASK" "distribution/Casks/$CASK.rb" "$PREVIOUS"
+      - name: Record successful native validation
+        env:
+          KEY: ${{ matrix.key }}
+        run: |
+          mkdir -p .local/validation/cask-sync
+          printf '%s' "$KEY" > .local/validation/cask-sync/key
+      - uses: actions/cache/save@v4
+        with:
+          path: .local/validation/cask-sync
+          key: ${{ matrix.key }}
+          enableCrossOsArchive: true
+  publish:
+    needs: [prepare, validate]
+    if: always() && !failure() && !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.prepare.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.cask }}-candidate
+          path: distribution
+      - name: Publish validated cask and verify tap main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CASK: ${{ inputs.cask }}
+        run: python3 scripts/sync-cask.py publish "$CASK" distribution
+  notify:
+    needs: [prepare, validate, publish]
+    if: failure() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Report publication blocker once
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CASK: ${{ inputs.cask }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          label="$CASK-bump-failure"
+          gh label create "$label" --repo "$GITHUB_REPOSITORY" --color b60205 --force
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --label "$label" --state open --json number --jq '.[0].number // empty')"
+          if [ -z "$existing" ]; then
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$CASK Homebrew publication failed" --label "$label" --body "Failed run: $RUN_URL. Restore missing original build artifacts or fix validation, then dispatch the app's tap workflow on main. Release-download fallback is prohibited. Routine updates require no PR merge."
+          fi
+          echo "::error::$CASK Homebrew publication failed: $RUN_URL"

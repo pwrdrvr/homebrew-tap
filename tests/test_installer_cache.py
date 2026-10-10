@@ -24,13 +24,13 @@ class InstallerCacheTests(unittest.TestCase):
         self.plan = cache.asset_plan(self.url, self.sha, "0.29.0", "arm64", len(self.payload))
         self.plan["path"] = str(self.root / "installer.dmg")
 
-    def test_exact_bytes_download_once_and_restore_without_network(self):
+    def test_exact_artifact_bytes_acquired_once_and_restore_without_network(self):
         calls = []
-        def download(args, check):
-            calls.append(args[-1])
-            Path(args[args.index("-o") + 1]).write_bytes(self.payload)
-        self.assertEqual(cache.ensure(self.plan, download), "downloaded")
-        self.assertEqual(cache.ensure(self.plan, download), "restored")
+        def acquire(url, sha, size, target):
+            calls.append(url)
+            Path(target).write_bytes(self.payload)
+        self.assertEqual(cache.ensure(self.plan, acquire), "build-artifact")
+        self.assertEqual(cache.ensure(self.plan, acquire), "restored")
         self.assertEqual(calls, [self.url])
 
     def test_corrupt_restored_bytes_and_wrong_size_are_rejected(self):
@@ -42,8 +42,8 @@ class InstallerCacheTests(unittest.TestCase):
                     cache.ensure({**self.plan, "size": size}, lambda *a, **k: self.fail("must not trust corrupt cache"))
 
     def test_failed_download_is_not_promoted_to_cache(self):
-        def download(args, check):
-            Path(args[args.index("-o") + 1]).write_bytes(b"wrong bytes")
+        def download(url, sha, size, target):
+            Path(target).write_bytes(b"wrong bytes")
         with self.assertRaisesRegex(ValueError, "digest/size mismatch"):
             cache.ensure(self.plan, download)
         self.assertFalse(Path(self.plan["path"]).exists())

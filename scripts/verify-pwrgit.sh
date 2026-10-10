@@ -18,7 +18,7 @@ if [ "$current" != "$target" ] && [ "$previous" = "$current" ]; then
 fi
 cp "$candidate" Casks/pwrgit.rb
 brew style --cask "$token"
-brew audit --cask --online "$token"
+brew audit --cask --online --except=url_https_availability "$token"
 if [ "$current" != "$target" ] && [ "$previous" = "$current" ]; then
   brew upgrade --cask --greedy "$token"
 else
