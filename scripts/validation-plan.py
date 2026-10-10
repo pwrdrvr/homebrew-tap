@@ -102,9 +102,9 @@ def validation_code(sync=False):
     # Only tracked sources: running Python tests must not fingerprint pycache or
     # generated plans. Documentation and unrelated app bump code need no install.
     sources = [".github/workflows/ci.yml", ".github/actions", "scripts/select-casks.py",
-               "scripts/installer-cache.py", "scripts/validation-plan.py", "tests"]
+               "scripts/installer-cache.py", "scripts/build-artifact.py", "scripts/ci-curl.py", "scripts/validation-plan.py", "tests"]
     if sync:
-        sources.extend([".github/workflows/bump-pwrgit.yml", "scripts/*pwrgit*"])
+        sources.extend([".github/workflows/bump*.yml", ".github/workflows/sync.yml", "scripts/*pwrgit*", "scripts/sync-cask.py", "scripts/verify-cask.sh"])
     paths = command("git", "ls-files", "-z", *sources).split("\0")
     digest = hashlib.sha256()
     for path in sorted(p for p in paths if p):
@@ -117,13 +117,15 @@ def main():
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--selection")
     mode.add_argument("--pwrgit-sync", metavar="DIRECTORY")
+    mode.add_argument("--sync", nargs=2, metavar=("TOKEN", "DIRECTORY"))
     args = parser.parse_args()
-    selected = ["pwrgit"] if args.pwrgit_sync else json.loads(Path(args.selection).read_text())["casks"]
+    sync_token, sync_directory = args.sync or ("pwrgit", args.pwrgit_sync)
+    selected = [sync_token] if sync_directory else json.loads(Path(args.selection).read_text())["casks"]
     source = lambda token: Path(f"Casks/{token}.rb").read_text()
     published = []
-    if not args.pwrgit_sync:
+    if not sync_directory:
         selected, published = unpublished_casks(selected, source, published_versions(selected))
-    elif not json.loads((Path(args.pwrgit_sync) / "sync.json").read_text())["changed"]:
+    elif not json.loads((Path(sync_directory) / "sync.json").read_text())["changed"]:
         selected = []
     repo = os.environ.get("GITHUB_REPOSITORY", "pwrdrvr/homebrew-tap")
     refs = {"refs/heads/main", os.environ.get("GITHUB_REF", ""), "refs/heads/" + os.environ.get("BASE_REF", "main")}
@@ -140,21 +142,21 @@ def main():
                             "--jq", '.actions_caches[] | {key,ref} | @json')
             entries.extend(json.loads(line) for line in lines.splitlines())
         return entries
-    code = validation_code(sync=bool(args.pwrgit_sync)) if selected else ""
+    code = validation_code(sync=bool(sync_directory)) if selected else ""
     namespace = "tap-validation-v1"
-    if args.pwrgit_sync and selected:
-        previous = source("pwrgit")
-        prior_assets = release_identity(previous, release("pwrgit", previous))
+    if sync_directory and selected:
+        previous = source(sync_token)
+        prior_assets = release_identity(previous, release(sync_token, previous))
         code = json.dumps(dict(code=code, previous_cask=previous, previous_assets=prior_assets), sort_keys=True)
-        source = lambda token: (Path(args.pwrgit_sync) / "Casks/pwrgit.rb").read_text()
-        release = lambda *_unused: json.loads((Path(args.pwrgit_sync) / "release.json").read_text())
+        source = lambda token: (Path(sync_directory) / f"Casks/{token}.rb").read_text()
+        release = lambda *_unused: json.loads((Path(sync_directory) / "release.json").read_text())
         namespace = "tap-sync-validation-v1"
     matrix, reused = make_matrix(selected, source, release, code, cache_lookup, refs,
                                  force=os.environ.get("FORCE_VALIDATION") == "true", namespace=namespace)
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
             output.write(f"matrix={json.dumps(matrix, separators=(',', ':'))}\n")
-            if not args.pwrgit_sync:
+            if not sync_directory:
                 installer = shared_pwrsnap_installer(matrix, source, release)
                 output.write(f"pwrsnap_installer={json.dumps(installer, separators=(',', ':'))}\n")
     report = (f"Published immutable versions skipped: {len(published)}; "

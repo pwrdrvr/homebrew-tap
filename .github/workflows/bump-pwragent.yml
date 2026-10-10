@@ -1,0 +1,33 @@
+name: Publish PwrAgent Stable Latest
+run-name: PwrAgent Homebrew sync ${{ inputs.version || 'Stable Latest' }}
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Promoted stable version without v (empty resolves Latest)
+        required: false
+        type: string
+  schedule:
+    - cron: "11,26,41,56 * * * *"
+  pull_request:
+    paths:
+      - Casks/pwragent.rb
+      - scripts/**
+      - tests/**
+      - .github/actions/**
+      - .github/workflows/sync.yml
+      - .github/workflows/bump-pwragent.yml
+permissions:
+  contents: write
+  actions: read
+  issues: write
+concurrency:
+  group: pwragent-sync-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: false
+jobs:
+  sync:
+    uses: ./.github/workflows/sync.yml
+    with:
+      cask: pwragent
+      version: ${{ inputs.version || '' }}
+    secrets: inherit

@@ -80,6 +80,8 @@ jobs:
       CASK: ${{ matrix.cask }}
       GH_TOKEN: ${{ github.token }}
       HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      HOMEBREW_CURL_PATH: ${{ github.workspace }}/scripts/ci-curl.py
+      HOMEBREW_NO_AUTO_UPDATE: '1'
     steps:
       - uses: actions/checkout@v5
         with:

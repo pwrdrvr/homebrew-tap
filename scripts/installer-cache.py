@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import importlib.util
 from pathlib import Path
 
 
@@ -71,20 +72,27 @@ def verify(path, plan):
         raise ValueError(f"Installer digest/size mismatch: {path}")
 
 
-def ensure(plan, download=subprocess.run):
+def ensure(plan, acquire=None):
     path = Path(plan["path"])
     if path.exists():
         verify(path, plan)  # Restored caches are untrusted, even on an exact key.
         return "restored"
     path.parent.mkdir(parents=True, exist_ok=True)
+    if plan["size"] is None:
+        raise ValueError("Release size is required for build artifact verification")
+    if acquire is None:
+        spec = importlib.util.spec_from_file_location("build_artifact", Path(__file__).with_name("build-artifact.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        acquire = module.acquire
     temporary = path.with_suffix(".partial")
     try:
-        download(["curl", "-fsSL", "--retry", "3", "-o", str(temporary), plan["url"]], check=True)
+        acquire(plan["url"], plan["sha256"], plan["size"], temporary)
         verify(temporary, plan)
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
-    return "downloaded"
+    return "build-artifact"
 
 
 def seed_brew(plan, api=command):
