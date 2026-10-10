@@ -8,6 +8,7 @@ The published SHA-256 and size bind an artifact member to the release bytes.
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -60,7 +61,7 @@ def select_artifact(repo, tag, name, read=api):
     # Older PwrAgent Windows artifacts had seven-day retention; its assembled
     # publication artifact also contains the exact signed installers/checksums.
     if repo == "pwrdrvr/PwrAgent":
-        names.insert(0, "release-publish-artifacts")
+        names.append("release-publish-artifacts")
     for run in runs:
         if (run.get("head_sha") != sha or run.get("conclusion") != "success"
                 or run.get("event") not in {"push", "workflow_dispatch"}
@@ -93,11 +94,10 @@ def verify(path, sha256, size):
 
 def extract(archive, name, target, sha256, size):
     # Renaming SHA256SUMS during publication changes its name, not its bytes.
-    names = {name}
-    if "windows-SHA256SUMS" in name:
-        names.add("SHA256SUMS")
     with zipfile.ZipFile(archive) as bundle:
-        matches = [info for info in bundle.infolist() if Path(info.filename).name in names and not info.is_dir()]
+        matches = [info for info in bundle.infolist() if Path(info.filename).name == name and not info.is_dir()]
+        if not matches and "windows-SHA256SUMS" in name:
+            matches = [info for info in bundle.infolist() if Path(info.filename).name == "SHA256SUMS" and not info.is_dir()]
         if len(matches) != 1 or matches[0].file_size != size:
             raise ValueError(f"Missing/ambiguous/wrong-size artifact member: {name}")
         info = matches[0]
@@ -110,14 +110,24 @@ def extract(archive, name, target, sha256, size):
 
 def download_archive(repo, artifact, target):
     # gh handles API authentication/redirects. No release URL is accepted here.
-    with Path(target).open("wb") as destination:
-        subprocess.run(["gh", "api", f"repos/{repo}/actions/artifacts/{artifact['id']}/zip"],
-                       stdout=destination, check=True)
+    cache = Path(os.environ.get("BUILD_ARTIFACT_CACHE", ".local/build-artifacts"))
+    cache.mkdir(parents=True, exist_ok=True)
+    archive = cache / f"{repo.replace('/', '-')}-{artifact['id']}.zip"
+    if not archive.exists():
+        temporary = archive.with_suffix(".partial")
+        try:
+            with temporary.open("wb") as destination:
+                subprocess.run(["gh", "api", f"repos/{repo}/actions/artifacts/{artifact['id']}/zip"],
+                               stdout=destination, check=True)
+            temporary.replace(archive)
+        finally:
+            temporary.unlink(missing_ok=True)
     digest = artifact.get("digest")
     if digest:
         if not re.fullmatch(r"sha256:[a-f0-9]{64}", digest):
             raise ValueError("Invalid Actions artifact archive digest")
-        verify(target, digest[7:], Path(target).stat().st_size)
+        verify(archive, digest[7:], archive.stat().st_size)
+    shutil.copyfile(archive, target)
 
 
 def acquire(url, sha256, size, target, read=api, download=download_archive):
