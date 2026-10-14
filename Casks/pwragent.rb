@@ -3,9 +3,9 @@
 cask "pwragent" do
   arch arm: "arm64", intel: "universal"
 
-  version "1.1.6"
-  sha256 arm:   "9181a06f3953a606ef1e69292fbd74c53d07a163c56456556746f2c072b32283",
-         intel: "b1ac2ee4d773d677a625491ff883a98f27dff43c991d2483c880e362dd049ce5"
+  version "1.2.1"
+  sha256 arm:   "b1ce8fb1a0516f7251fe17a7842c95358c56f24c0b7132216b58ed07ce824eab",
+         intel: "49160e1d93137f9f6de9615574081ab926afe28a453b8c7bc5eb2928ad9515de"
 
   url "https://github.com/pwrdrvr/PwrAgent/releases/download/v#{version}/PwrAgent-#{version}-#{arch}.dmg"
   name "PwrAgent"
@@ -18,7 +18,7 @@ cask "pwragent" do
   end
 
   auto_updates true
-  depends_on macos: :monterey
+  depends_on macos: :ventura
 
   app "PwrAgent.app"
 
