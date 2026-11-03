@@ -87,10 +87,11 @@ jobs:
         with:
           name: ${{ inputs.cask }}-candidate
           path: distribution
-      - name: Link tap and preserve published cask
+      - name: Link tap, trust cask and preserve published cask
         run: |
           mkdir -p "$(brew --repository)/Library/Taps/pwrdrvr"
           ln -s "$PWD" "$(brew --repository)/Library/Taps/pwrdrvr/homebrew-tap"
+          if brew trust --help >/dev/null 2>&1; then brew trust --cask "pwrdrvr/tap/$CASK"; fi
           cp "Casks/$CASK.rb" "$RUNNER_TEMP/published.rb"
       - name: Restore previous build artifact for upgrade test
         uses: ./.github/actions/cache-installer
