@@ -1,9 +1,9 @@
 cask "pwrgit" do
   arch arm: "arm64", intel: "universal"
 
-  version "0.49.0"
-  sha256 arm:   "736b46a6c258d1441b842d74ecbc2579ec2bf35f2df0bcc7ca57625c7dc982ef",
-         intel: "8984b03c28632fb3f24e43add0c6aa77adb6b7a2e12e95b934be63e353127b8f"
+  version "0.50.0"
+  sha256 arm:   "44b56f0d7b6f1fac9725941dd93cb048a26a5c785eea265c37d805086cb4cbfb",
+         intel: "a08a3944ee7d3de971e3b404051e9c70df5bd64aeddd230544d74c9483aa40e3"
 
   url "https://github.com/pwrdrvr/PwrGit/releases/download/v#{version}/PwrGit-#{version}-#{arch}.dmg"
   name "PwrGit"
