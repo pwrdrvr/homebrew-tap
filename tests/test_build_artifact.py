@@ -21,10 +21,11 @@ class BuildArtifactTests(unittest.TestCase):
         self.payload = b"signed installer"
         self.sha = hashlib.sha256(self.payload).hexdigest()
         self.commit = "a" * 40
-        self.run = dict(id=10, head_sha=self.commit, conclusion="success", event="push",
+        self.run = dict(id=10, head_sha=self.commit, status="completed", conclusion="success", event="push",
                         path=".github/workflows/release.yml", head_branch="v1.2.3",
                         head_repository=dict(full_name="pwrdrvr/PwrSnap"))
         self.archive = dict(id=20, name="desktop-release-macos-artifacts", expired=False)
+        self.jobs = []
         self.url = "https://github.com/pwrdrvr/PwrSnap/releases/download/v1.2.3/PwrSnap-1.2.3-universal.dmg"
         self.calls = []
 
@@ -36,6 +37,9 @@ class BuildArtifactTests(unittest.TestCase):
             return dict(object=dict(type="commit", sha=self.commit))
         if "/workflows/" in endpoint:
             return dict(workflow_runs=[self.run])
+        if "/jobs?" in endpoint:
+            self.assertIn("filter=all", endpoint)
+            return dict(jobs=self.jobs)
         return dict(artifacts=[self.archive])
 
     def download(self, repo, selected, target):
@@ -53,8 +57,129 @@ class BuildArtifactTests(unittest.TestCase):
         self.assertEqual(self.acquire(), "restored")
         self.assertEqual(len(self.calls), count)
 
+    def pwragent_failed_run(self):
+        # v1.3.13 published signed desktop assets, then failed npm verification.
+        self.run.update(conclusion="failure", head_branch="v1.3.13",
+                        head_repository=dict(full_name="pwrdrvr/PwrAgent"))
+        self.archive["name"] = "desktop-release-artifacts"
+        self.url = "https://github.com/pwrdrvr/PwrAgent/releases/download/v1.3.13/PwrAgent-1.3.13-arm64.dmg"
+        self.jobs = [dict(name=name, status="completed", conclusion=conclusion, run_attempt=2)
+                     for name, conclusion in [
+                         ("Sign, notarize, package macOS", "success"),
+                         ("Sign and package Windows installer", "success"),
+                         ("Publish release assets", "success"),
+                         ("Verify Outpost npm publication after processing", "failure"),
+                         ("Verify desktop and Outpost release completion", "failure")]]
+
+    def test_published_desktop_artifact_survives_unrelated_npm_failure(self):
+        self.pwragent_failed_run()
+        def download(repo, selected, target):
+            self.assertEqual(repo, "pwrdrvr/PwrAgent")
+            self.assertEqual(selected["id"], 20)
+            with zipfile.ZipFile(target, "w") as bundle:
+                bundle.writestr("dist/PwrAgent-1.3.13-arm64.dmg", self.payload)
+        self.assertEqual(artifact.acquire(self.url, self.sha, len(self.payload), self.target,
+                                          self.read, download), "build-artifact")
+        self.assertEqual(self.target.read_bytes(), self.payload)
+        self.assertTrue(any("status=completed" in call for call in self.calls))
+
+    def test_failed_run_requires_successful_producer_and_publication(self):
+        self.pwragent_failed_run()
+        for name in ["Sign, notarize, package macOS", "Publish release assets"]:
+            job = next(job for job in self.jobs if job["name"] == name)
+            for conclusion in ["failure", "skipped", "cancelled", None]:
+                with self.subTest(name=name, conclusion=conclusion):
+                    job["conclusion"] = conclusion
+                    with self.assertRaisesRegex(ValueError, "fallback is prohibited"):
+                        self.acquire()
+            job["conclusion"] = "success"
+            self.jobs.remove(job)
+            with self.assertRaisesRegex(ValueError, "fallback is prohibited"):
+                self.acquire()
+            self.jobs.append(job)
+        self.assertFalse(self.target.exists())
+
+    def test_latest_required_job_attempt_controls_failed_run_eligibility(self):
+        self.pwragent_failed_run()
+        producer = next(job for job in self.jobs if job["name"] == "Sign, notarize, package macOS")
+        # Failed/skipped jobs from the original attempt do not veto a good retry.
+        self.jobs.insert(0, dict(producer, conclusion="skipped", run_attempt=1))
+        self.assertEqual(artifact.select_artifact("pwrdrvr/PwrAgent", "v1.3.13",
+                                                  "PwrAgent-1.3.13-arm64.dmg", self.read)["artifact"]["id"], 20)
+        # A later failed retry must not be hidden by an earlier success.
+        self.jobs.append(dict(producer, conclusion="failure", run_attempt=3))
+        with self.assertRaisesRegex(ValueError, "fallback is prohibited"):
+            self.acquire()
+        self.jobs[-1].update(conclusion="success", status="in_progress")
+        with self.assertRaisesRegex(ValueError, "fallback is prohibited"):
+            self.acquire()
+        # Duplicate required names in one attempt cannot identify the producer.
+        self.jobs[-1].update(run_attempt=2, status="completed")
+        with self.assertRaisesRegex(ValueError, "fallback is prohibited"):
+            self.acquire()
+
+    def test_failed_run_checks_the_selected_platform_or_assembled_producer(self):
+        self.pwragent_failed_run()
+        self.jobs[0]["conclusion"] = "failure"
+        for name, member in [("windows-installer", "PwrAgent-1.3.13-windows-x64-setup.exe"),
+                             ("release-publish-artifacts", "PwrAgent-1.3.13-arm64.dmg")]:
+            with self.subTest(name=name):
+                self.archive["name"] = name
+                selected = artifact.select_artifact("pwrdrvr/PwrAgent", "v1.3.13", member, self.read)
+                self.assertEqual(selected["artifact"]["id"], 20)
+        self.archive["name"] = "windows-installer"
+        self.jobs[1]["conclusion"] = "failure"
+        with self.assertRaisesRegex(ValueError, "fallback is prohibited"):
+            artifact.select_artifact("pwrdrvr/PwrAgent", "v1.3.13",
+                                     "PwrAgent-1.3.13-windows-x64-setup.exe", self.read)
+
+    def test_failed_run_still_requires_trusted_provenance_and_matching_bytes(self):
+        self.pwragent_failed_run()
+        for key, value in [("event", "pull_request"), ("head_sha", "b" * 40),
+                           ("status", "in_progress"), ("conclusion", "cancelled"),
+                           ("path", ".github/workflows/preview-build.yml"),
+                           ("head_branch", "main"), ("head_repository", dict(full_name="attacker/fork"))]:
+            with self.subTest(key=key):
+                original = self.run[key]
+                self.run[key] = value
+                with self.assertRaisesRegex(ValueError, "fallback is prohibited"):
+                    self.acquire()
+                self.run[key] = original
+        self.archive["expired"] = True
+        with self.assertRaisesRegex(ValueError, "fallback is prohibited"):
+            self.acquire()
+        self.archive["expired"] = False
+        def corrupt(repo, selected, target):
+            with zipfile.ZipFile(target, "w") as bundle:
+                bundle.writestr("PwrAgent-1.3.13-arm64.dmg", b"x" * len(self.payload))
+        with self.assertRaisesRegex(ValueError, "digest/size mismatch"):
+            artifact.acquire(self.url, self.sha, len(self.payload), self.target, self.read, corrupt)
+        self.assertFalse(self.target.exists())
+
+    def test_required_jobs_are_found_after_first_page(self):
+        self.pwragent_failed_run()
+        def read(endpoint):
+            if "/jobs?" in endpoint and endpoint.endswith("&page=1"):
+                self.calls.append(endpoint)
+                return dict(jobs=[self.jobs[-1]] * 100)
+            return self.read(endpoint)
+        self.assertEqual(artifact.select_artifact("pwrdrvr/PwrAgent", "v1.3.13",
+                                                  "PwrAgent-1.3.13-arm64.dmg", read)["artifact"]["id"], 20)
+        self.assertTrue(any("/jobs?" in call and "page=2" in call for call in self.calls))
+
+    def test_other_products_use_their_desktop_publication_job(self):
+        self.run["conclusion"] = "failure"
+        self.jobs = [dict(name=name, status="completed", conclusion="success", run_attempt=1)
+                     for name in ["Sign, notarize, package macOS", "Create release and publish platform assets"]]
+        for repo in ["pwrdrvr/PwrGit", "pwrdrvr/PwrSnap"]:
+            with self.subTest(repo=repo):
+                self.run["head_repository"]["full_name"] = repo
+                self.assertEqual(artifact.select_artifact(repo, "v1.2.3", "installer.dmg", self.read)
+                                 ["artifact"]["id"], 20)
+
     def test_untrusted_failed_wrong_commit_workflow_or_branch_cannot_supply_bytes(self):
         for key, value in [("event", "pull_request"), ("conclusion", "failure"),
+                           ("status", "in_progress"), ("conclusion", "cancelled"),
                            ("head_sha", "b" * 40), ("path", ".github/workflows/preview-build.yml"),
                            ("head_branch", "main"), ("head_repository", dict(full_name="attacker/fork"))]:
             with self.subTest(key=key):

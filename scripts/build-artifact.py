@@ -50,11 +50,34 @@ def tag_commit(repo, tag, read=api):
     raise ValueError("Release tag does not resolve to a commit")
 
 
+def release_jobs_succeeded(repo, artifact_name, jobs):
+    publication = ("Publish release assets" if repo == "pwrdrvr/PwrAgent"
+                   else "Create release and publish platform assets")
+    if artifact_name == "release-publish-artifacts":
+        producer = publication
+    elif artifact_name == "windows-installer":
+        producer = "Sign and package Windows installer"
+    else:
+        producer = "Sign, notarize, package macOS"
+    for name in {producer, publication}:
+        matches = [job for job in jobs if job["name"] == name]
+        if not matches:
+            return False
+        # Partial reruns retain earlier jobs. Inspect every attempt so an old
+        # failure cannot veto a successful retry, or mask a later failed retry.
+        attempt = max(job["run_attempt"] for job in matches)
+        latest = [job for job in matches if job["run_attempt"] == attempt]
+        if (len(latest) != 1 or latest[0].get("status") != "completed"
+                or latest[0].get("conclusion") != "success"):
+            return False
+    return True
+
+
 def select_artifact(repo, tag, name, read=api):
     if repo not in REPOSITORIES or not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
         raise ValueError("Expected a PwrDrvr stable release tag")
     sha = tag_commit(repo, tag, read)
-    query = urlencode({"head_sha": sha, "status": "success"})
+    query = urlencode({"head_sha": sha, "status": "completed"})
     runs = pages(f"repos/{repo}/actions/workflows/release.yml/runs?{query}", "workflow_runs", read)
     windows = name.endswith(".exe") or "windows-SHA256SUMS" in name
     names = ["windows-installer"] if windows else [REPOSITORIES[repo]]
@@ -63,22 +86,33 @@ def select_artifact(repo, tag, name, read=api):
     if repo == "pwrdrvr/PwrAgent":
         names.append("release-publish-artifacts")
     for run in runs:
-        if (run.get("head_sha") != sha or run.get("conclusion") != "success"
+        if (run.get("head_sha") != sha or run.get("status") != "completed"
+                or run.get("conclusion") not in {"success", "failure"}
                 or run.get("event") not in {"push", "workflow_dispatch"}
                 or run.get("head_repository", {}).get("full_name") != repo
                 or run.get("path") != ".github/workflows/release.yml"
                 or run.get("head_branch") != tag):
             continue
         artifacts = pages(f"repos/{repo}/actions/runs/{run['id']}/artifacts", "artifacts", read)
+        jobs = None
         for artifact_name in names:
             candidates = [a for a in artifacts if a["name"] == artifact_name and not a["expired"]]
             if len(candidates) > 1:
                 raise ValueError("Ambiguous release build artifact")
             if candidates:
+                # PwrAgent can publish signed desktop assets successfully and
+                # fail later on Outpost/npm. Require the relevant jobs to have
+                # succeeded rather than trusting a failed workflow wholesale.
+                if run["conclusion"] != "success":
+                    if jobs is None:
+                        jobs = pages(f"repos/{repo}/actions/runs/{run['id']}/jobs?filter=all", "jobs", read)
+                    if not release_jobs_succeeded(repo, artifact_name, jobs):
+                        continue
                 return {"repository": repo, "run": run["id"], "head_sha": sha,
                         "artifact": candidates[0]}
-    raise ValueError(f"No retained successful release build artifact for {repo} {tag}. "
-                     "Restore the original build artifact; release-download fallback is prohibited.")
+    raise ValueError(f"No retained release build artifact with successful build/publication jobs for {repo} {tag}. "
+                     "Check release job results or restore the original build artifact; "
+                     "release-download fallback is prohibited.")
 
 
 def verify(path, sha256, size):
