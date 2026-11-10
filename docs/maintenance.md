@@ -16,9 +16,14 @@ without it, they await the independent tap schedule. Public-read credentials and
 Winget submission credentials remain separate.
 
 Installer acquisition uses retained **Actions build artifacts**, never published
-release-download URLs. The resolver requires a successful `release.yml` run for
-the exact stable tag commit, rejects PR/fork/preview/failed runs, and verifies each
-member's SHA-256 and size against GitHub release metadata. Existing signed
+release-download URLs. The resolver requires a completed `release.yml` run for
+the exact stable tag commit and rejects PR/fork/preview/cancelled runs. A failed
+workflow is eligible only when the selected artifact's producing job and desktop
+publication job both succeeded in their latest attempts. For example, PwrAgent's
+Outpost npm verification can fail after the signed desktop assets are published;
+that unrelated failure does not invalidate the desktop build. Missing, skipped,
+or failed required jobs still stop acquisition. Each member's SHA-256 and size
+are verified against GitHub release metadata. Existing signed
 macOS/Windows artifacts retain for 90 days in the product workflows. The tap's
 installer cache stores exact verified bytes; restored bytes are checked again.
 A Homebrew curl guard prohibits PwrDrvr release-asset requests, so a missing
