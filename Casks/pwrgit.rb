@@ -19,5 +19,8 @@ cask "pwrgit" do
   depends_on macos: :ventura
 
   app "PwrGit.app"
-  command_wrapper "pwrgit", executable: "#{appdir}/PwrGit.app/Contents/Resources/git/bin/git"
+  command_wrapper "pwrgit", content: <<~SH
+    #!/bin/sh
+    exec #{Shellwords.escape("#{appdir}/PwrGit.app/Contents/Resources/git/bin/git")} "$@"
+  SH
 end
