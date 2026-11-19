@@ -30,6 +30,25 @@ case "$cask" in
   *) exit 1 ;;
 esac
 app="/Applications/$appname.app"
+cli="$(brew --prefix)/bin/pwrgit"
+verify_pwrgit_command() {
+  [[ "$cask" == pwrgit ]] || return 0
+  local runtime="$app/Contents/Resources/git"
+  local actual expected
+  test -x "$cli"
+  actual=$("$cli" --version)
+  expected=$("$runtime/bin/git" --version)
+  test "$actual" = "$expected"
+  test "$("$cli" --exec-path)" = "$runtime/libexec/git-core"
+  actual=$("$cli" lfs version)
+  expected=$("$runtime/libexec/git-core/git-lfs" version)
+  test "$actual" = "$expected"
+}
+verify_pwrgit_unlinked() {
+  [[ "$cask" == pwrgit ]] || return 0
+  test ! -L "$cli"
+  test ! -e "$cli"
+}
 test -d "$app"
 test ! -L "$app"
 test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Contents/Info.plist")" = "$bundle"
@@ -47,14 +66,18 @@ if [[ "$cask" == pwrsnap || "$(uname -m)" == x86_64 ]]; then
 else
   test "$slices" = arm64
 fi
+verify_pwrgit_command
 brew uninstall --cask "$token"
 installed=false
 test ! -e "$app"
+verify_pwrgit_unlinked
 # Fresh candidate installation reuses the same verified artifact cache.
 brew install --cask "$token"
 installed=true
 test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$target"
+verify_pwrgit_command
 brew uninstall --cask "$token"
 installed=false
 test ! -e "$app"
+verify_pwrgit_unlinked
 echo "Verified $appname $previous -> $target: artifact-backed install/upgrade, signature, notarization, architecture and uninstall"

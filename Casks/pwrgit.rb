@@ -19,4 +19,5 @@ cask "pwrgit" do
   depends_on macos: :ventura
 
   app "PwrGit.app"
+  command_wrapper "pwrgit", executable: "#{appdir}/PwrGit.app/Contents/Resources/git/bin/git"
 end
