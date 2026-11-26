@@ -3,9 +3,9 @@
 cask "pwragent" do
   arch arm: "arm64", intel: "universal"
 
-  version "1.4.16"
-  sha256 arm:   "44900ebae346a904dfa8dcf5d1902942dad2473fabd658751bc5e9536dada209",
-         intel: "33df71c5f4daa27f79d7d97150c1d5422c83149a35abcffae33394e3fa320a7b"
+  version "1.5.0"
+  sha256 arm:   "a3c6632a69662e1a0c5060cc73836986e35f5d39db07fff808b89913e4d8dc2d",
+         intel: "0b0cd881a7355ac172bb66020f0f062c752dbe258e2ef4685cb29ccb3a167a55"
 
   url "https://github.com/pwrdrvr/PwrAgent/releases/download/v#{version}/PwrAgent-#{version}-#{arch}.dmg"
   name "PwrAgent"
